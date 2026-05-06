@@ -35,6 +35,7 @@ from vnpy.alpha.strategy import BacktestingEngine
 from hs300_top10.data.loader import get_lab, discover_symbols
 from hs300_top10.model.rolling_trainer import rolling_train
 from hs300_top10.strategy.hs300_top10_strategy import HS300Top10Strategy
+from hs300_top10.strategy.config import StrategyConfig, BASELINE_V10, OPTIMIZED_V11
 from hs300_top10.backtest.evaluation import (
     print_metrics,
     show_charts,
@@ -374,14 +375,34 @@ def phase_train_or_load(skip_train: bool = False) -> pl.DataFrame:
 # Phase 3: 策略回测
 # ══════════════════════════════════════════════════════════
 
-def phase_backtest(signal_df: pl.DataFrame) -> dict:
-    """执行回测并返回统计指标"""
+def phase_backtest(
+    signal_df: pl.DataFrame,
+    config: StrategyConfig | None = None,
+    output_dir: Path | None = None,
+) -> dict:
+    """执行回测并返回统计指标。
+
+    Parameters
+    ----------
+    config : StrategyConfig | None
+        策略配置。None 则使用 BASELINE_V10。
+    output_dir : Path | None
+        报告输出目录。None 则使用 REPORT_DIR / config.version。
+    """
+    if config is None:
+        from hs300_top10.strategy.config import BASELINE_V10
+        config = BASELINE_V10
+
     print("\n" + "=" * 60)
-    print("  Phase 3: 策略回测")
+    print(f"  Phase 3: 策略回测 [{config.version}] {config.description}")
     print("=" * 60)
 
     lab = get_lab(LAB_PATH)
     vt_symbols = discover_symbols(LAB_PATH)
+
+    if config.use_market_filter and config.market_benchmark not in vt_symbols:
+        vt_symbols = vt_symbols + [config.market_benchmark]
+        lab.add_contract_setting(config.market_benchmark, 0, 0, 1, 0.01)
 
     engine = BacktestingEngine(lab)
     engine.set_parameters(
@@ -393,14 +414,9 @@ def phase_backtest(signal_df: pl.DataFrame) -> dict:
     )
 
     setting = {
-        "top_k": 10,
-        "stop_loss_pct": 0.03,
-        "tp_activate_pct": 0.03,
-        "tp_trail_pct": 0.02,
-        "max_hold_days": 4,
-        "cash_ratio": 0.95,
-        "min_volume": 100,
-        "price_add": 0.002,
+        k: v for k, v in config.to_dict().items()
+        if k not in ("version", "description") and not k.startswith("xgb_")
+        and k != "train_years"
     }
 
     engine.add_strategy(HS300Top10Strategy, setting, signal_df)
@@ -414,7 +430,6 @@ def phase_backtest(signal_df: pl.DataFrame) -> dict:
     print("  计算逐日盈亏 ...")
     engine.calculate_result()
 
-    # ── 绩效统计 ──
     print("\n" + "=" * 60)
     print("  Phase 4: 绩效评估")
     print("=" * 60)
@@ -422,11 +437,13 @@ def phase_backtest(signal_df: pl.DataFrame) -> dict:
     stats = engine.calculate_statistics()
     print_metrics(stats)
 
-    # ── 导出报告 ──
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    export_report(engine, stats, REPORT_DIR)
+    report_dir = output_dir or REPORT_DIR / config.version
+    report_dir.mkdir(parents=True, exist_ok=True)
+    export_report(engine, stats, report_dir)
 
-    # ── 图表（交互式） ──
+    config.to_json(report_dir / "config.json")
+    print(f"  [报告] 策略配置 -> {report_dir / 'config.json'}")
+
     try:
         show_charts(engine, benchmark_symbol="000300.SSE")
     except Exception as e:
@@ -439,6 +456,56 @@ def phase_backtest(signal_df: pl.DataFrame) -> dict:
 # 主入口
 # ══════════════════════════════════════════════════════════
 
+def _compare_results(results: list[tuple[str, dict]], output_dir: Path) -> None:
+    """生成多版本对比报告"""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    compare_keys = [
+        ("total_return", "总收益率 (%)"),
+        ("annual_return", "年化收益率 (%)"),
+        ("max_ddpercent", "最大回撤 (%)"),
+        ("sharpe_ratio", "Sharpe Ratio"),
+        ("return_drawdown_ratio", "收益回撤比"),
+        ("total_trade_count", "总交易笔数"),
+        ("total_commission", "总手续费"),
+        ("total_net_pnl", "总净盈亏"),
+    ]
+
+    print("\n" + "=" * 70)
+    print("  版本对比")
+    print("=" * 70)
+    header = f"  {'指标':<16s}" + "".join(f"  {name:>14s}" for name, _ in results)
+    print(header)
+    print("-" * 70)
+
+    compare_data = {}
+    for key, label in compare_keys:
+        row = f"  {label:<16s}"
+        for name, stats in results:
+            val = stats.get(key, 0)
+            if "率" in label or "回撤" in label or "Ratio" in label or "比" in label:
+                row += f"  {val:>14.2f}"
+            else:
+                row += f"  {val:>14,.0f}"
+        print(row)
+        compare_data[label] = {name: stats.get(key, 0) for name, stats in results}
+
+    print("=" * 70)
+
+    compare_path = output_dir / "comparison.json"
+
+    def _default_serializer(obj):
+        if hasattr(obj, "item"):
+            return obj.item()
+        raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+    compare_path.write_text(
+        json.dumps(compare_data, indent=2, ensure_ascii=False, default=_default_serializer),
+        encoding="utf-8",
+    )
+    print(f"\n  [对比] 详细结果 -> {compare_path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="HS300 Top-10 统一调度脚本")
     parser.add_argument("--force-download", action="store_true",
@@ -447,13 +514,30 @@ def main() -> None:
                         help="仅回测（使用上次训练的信号缓存）")
     parser.add_argument("--skip-download", action="store_true",
                         help="跳过数据下载（使用已有 lab 数据）")
+    parser.add_argument("--config", choices=["v1.0", "v1.1", "compare"], default="v1.1",
+                        help="策略配置版本 (默认 v1.1，compare=同时运行v1.0和v1.1)")
+    parser.add_argument("--config-file", type=str, default=None,
+                        help="自定义配置文件路径 (JSON)")
     args = parser.parse_args()
+
+    config_map = {"v1.0": BASELINE_V10, "v1.1": OPTIMIZED_V11}
+
+    if args.config_file:
+        config = StrategyConfig.from_json(args.config_file)
+    elif args.config != "compare":
+        config = config_map[args.config]
+    else:
+        config = None
 
     print("=" * 60)
     print("  HS300 Top-10 周度选股策略 — 统一调度")
     print(f"  数据区间: {DATA_START} ~ {DATA_END}")
     print(f"  回测区间: {BACKTEST_START} ~ {BACKTEST_END}")
     print(f"  初始资金: {CAPITAL:,.0f}")
+    if config:
+        print(f"  策略版本: [{config.version}] {config.description}")
+    else:
+        print(f"  策略版本: 对比模式 (v1.0 vs v1.1)")
     print("=" * 60)
 
     # Phase 1: 下载
@@ -472,7 +556,14 @@ def main() -> None:
     signal_df = phase_train_or_load(skip_train=args.backtest_only)
 
     # Phase 3: 回测 + 报告
-    stats = phase_backtest(signal_df)
+    if args.config == "compare":
+        results = []
+        for ver, cfg in config_map.items():
+            stats = phase_backtest(signal_df, config=cfg)
+            results.append((ver, stats))
+        _compare_results(results, REPORT_DIR)
+    else:
+        stats = phase_backtest(signal_df, config=config)
 
     print("\n" + "=" * 60)
     print("  全部完成!")
