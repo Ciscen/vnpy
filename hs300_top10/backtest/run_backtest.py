@@ -15,8 +15,6 @@ import shelve
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import polars as pl
-
 from vnpy.trader.constant import Interval
 from vnpy.alpha import AlphaLab
 from vnpy.alpha.strategy import BacktestingEngine
@@ -25,19 +23,17 @@ from hs300_top10.data.loader import get_lab, discover_symbols
 from hs300_top10.model.rolling_trainer import rolling_train
 from hs300_top10.strategy.hs300_top10_strategy import HS300Top10Strategy
 from hs300_top10.backtest.evaluation import print_metrics, show_charts, export_report
+from hs300_top10.pipeline_config import PIPELINE
 
 # ──────────────────────────────────────────────────
-# 配置（10 年: 2016-04-30 ~ 2026-04-30）
+# 配置 — 来自 pipeline_config 统一管理
 # ──────────────────────────────────────────────────
-LAB_PATH = "./lab/hs300"
-
-DATA_START = "2016-04-30"
-DATA_END = "2026-04-30"
-
-BACKTEST_START = "2024-05-01"
-BACKTEST_END = "2026-04-30"
-
-CAPITAL = 10_000_000
+LAB_PATH = PIPELINE.lab_path
+DATA_START = PIPELINE.data_start
+DATA_END = PIPELINE.data_end
+BACKTEST_START = PIPELINE.backtest_start
+BACKTEST_END = PIPELINE.backtest_end
+CAPITAL = PIPELINE.capital
 
 REPORT_DIR = Path("hs300_top10") / "output"
 

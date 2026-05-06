@@ -12,8 +12,9 @@ import polars as pl
 from vnpy.trader.constant import Interval
 from vnpy.alpha import AlphaLab
 
+from hs300_top10.pipeline_config import PIPELINE
 
-DEFAULT_LAB_PATH = "./lab/hs300"
+DEFAULT_LAB_PATH = PIPELINE.lab_path
 
 
 def get_lab(lab_path: str = DEFAULT_LAB_PATH) -> AlphaLab:

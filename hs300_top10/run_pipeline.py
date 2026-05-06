@@ -47,35 +47,29 @@ from hs300_top10.backtest.evaluation import (
     show_charts,
     export_report,
 )
+from hs300_top10.pipeline_config import PIPELINE
 
 # ══════════════════════════════════════════════════════════
-# 全局配置
+# 全局配置 — 来自 pipeline_config 统一管理
 # ══════════════════════════════════════════════════════════
-LAB_PATH = "./lab/hs300"
-
-# 数据区间：最近 10 年
-DATA_START = "2016-04-30"
-DATA_END = "2026-04-30"
-
-# 回测区间：最后 2 年
-BACKTEST_START = "2024-05-01"
-BACKTEST_END = "2026-04-30"
-
-CAPITAL = 100_000
+LAB_PATH = PIPELINE.lab_path
+DATA_START = PIPELINE.data_start
+DATA_END = PIPELINE.data_end
+BACKTEST_START = PIPELINE.backtest_start
+BACKTEST_END = PIPELINE.backtest_end
+CAPITAL = PIPELINE.capital
+SIGNAL_CACHE = PIPELINE.signal_cache
+SIGNAL_CACHE_DAILY = PIPELINE.signal_cache_daily
 
 # 下载配置
-AK_START = "20160430"
-AK_END = "20260430"
+AK_START = DATA_START.replace("-", "")
+AK_END = DATA_END.replace("-", "")
 LONG_RATE = 0.001       # 买入佣金 0.1%
 SHORT_RATE = 0.002      # 卖出佣金+印花税 0.2%
 SIZE = 1
 PRICETICK = 0.01
 MAX_RETRIES = 3
 SLEEP_BETWEEN = 1.5
-
-# 信号缓存路径
-SIGNAL_CACHE = Path(LAB_PATH) / "signal" / "hs300_top10.parquet"
-SIGNAL_CACHE_DAILY = Path(LAB_PATH) / "signal" / "hs300_top10_daily.parquet"
 
 # 报告输出目录
 REPORT_DIR = Path("hs300_top10") / "output"
