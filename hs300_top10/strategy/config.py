@@ -50,6 +50,11 @@ class StrategyConfig:
     smooth_rebalance: bool = False     # 调仓平滑：已持仓 & 仍在信号中的不动
     max_replace_ratio: float = 1.0     # 单次最大换仓比例（1.0=全换）
 
+    # ── V1.2 组合级风控 ──
+    portfolio_daily_loss_limit: float = 0.0   # 单日最大亏损限制（0=禁用）
+    cooldown_days: int = 0                    # 触发后冷却天数
+    min_signal_spread: float = 0.0            # top1-topK 概率差距最小值
+
     # ── 模型参数 ──
     xgb_n_estimators: int = 500
     xgb_max_depth: int = 6
@@ -105,4 +110,27 @@ OPTIMIZED_V11 = StrategyConfig(
     tp_activate_pct=0.04,
     tp_trail_pct=0.02,
     max_hold_days=5,
+)
+
+OPTIMIZED_V12 = StrategyConfig(
+    version="v1.2",
+    description="V1.2: V1.1 + 集中持仓(top8) + 更低换手",
+    # 完全继承 V1.1 参数
+    smooth_rebalance=True,
+    max_replace_ratio=0.7,
+    use_atr_stop=True,
+    atr_stop_multiplier=2.0,
+    atr_stop_min=0.02,
+    atr_stop_max=0.05,
+    dynamic_k=True,
+    dynamic_k_min=4,
+    dynamic_k_prob_threshold=0.30,
+    weight_by_signal=True,
+    min_signal_prob=0.15,
+    stop_loss_pct=0.04,
+    tp_activate_pct=0.04,
+    tp_trail_pct=0.02,
+    max_hold_days=5,
+    # V1.2 唯一变化：更集中的持仓
+    top_k=8,
 )

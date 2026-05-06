@@ -62,6 +62,11 @@ class HS300Top10Strategy(AlphaStrategy):
     weight_by_signal: bool = False
     min_signal_prob: float = 0.0
 
+    # V1.2 新增参数
+    portfolio_daily_loss_limit: float = 0.0   # 组合级单日最大亏损限制（0=禁用，正值如 0.025 = 2.5%）
+    cooldown_days: int = 0                    # 触发组合止损后的冷却天数（不开新仓）
+    min_signal_spread: float = 0.0            # 信号质量要求：top-1 和 top-K 概率差距最小值
+
     def on_init(self) -> None:
         """策略初始化"""
         self.entry_prices: dict[str, float] = {}
@@ -73,6 +78,8 @@ class HS300Top10Strategy(AlphaStrategy):
         self._price_history: dict[str, list[float]] = {}
         self._benchmark_closes: list[float] = []
         self._market_ok: bool = True
+        self._cooldown_remaining: int = 0
+        self._prev_balance: float = 0.0
 
         self.write_log("HS300Top10Strategy 初始化完成")
 
@@ -143,11 +150,26 @@ class HS300Top10Strategy(AlphaStrategy):
         for symbol in risk_sell:
             self.set_target(symbol, 0)
 
-        # ── 3. 周一：读取信号 → 调仓 ──
-        if weekday == 0:
+        # ── 3. 组合级风控：单日最大亏损限制 ──
+        if self.portfolio_daily_loss_limit > 0:
+            current_balance = self._estimate_balance(bars)
+            if self._prev_balance > 0:
+                daily_ret = (current_balance - self._prev_balance) / self._prev_balance
+                if daily_ret <= -self.portfolio_daily_loss_limit:
+                    for s in pos_symbols:
+                        if s not in risk_sell:
+                            self.set_target(s, 0)
+                    self._cooldown_remaining = self.cooldown_days
+            self._prev_balance = current_balance
+
+        if self._cooldown_remaining > 0:
+            self._cooldown_remaining -= 1
+
+        # ── 4. 周一：读取信号 → 调仓 ──
+        if weekday == 0 and self._cooldown_remaining <= 0:
             self._rebalance(bars, pos_symbols, risk_sell)
 
-        # ── 4. 统一下单 ──
+        # ── 5. 统一下单 ──
         self.execute_trading(bars, price_add=self.price_add)
 
     # ------------------------------------------------------------------
@@ -235,6 +257,14 @@ class HS300Top10Strategy(AlphaStrategy):
                 effective_k = max(self.dynamic_k_min, self.top_k // 2)
 
         buy_candidates: list[str] = list(signal["vt_symbol"][:effective_k])
+
+        # 信号质量检查：top-1 与 top-K 概率差距过小则缩减
+        if self.min_signal_spread > 0 and len(buy_candidates) >= 2:
+            top1_prob = signal["signal"][0]
+            topk_prob = signal["signal"][min(effective_k - 1, signal.height - 1)]
+            if top1_prob - topk_prob < self.min_signal_spread:
+                effective_k = max(self.dynamic_k_min if self.dynamic_k else 3, effective_k // 2)
+                buy_candidates = list(signal["vt_symbol"][:effective_k])
 
         if self.smooth_rebalance:
             self._smooth_rebalance(bars, pos_symbols, risk_sell, buy_candidates, signal)
@@ -338,6 +368,16 @@ class HS300Top10Strategy(AlphaStrategy):
     # ------------------------------------------------------------------
     # 工具方法
     # ------------------------------------------------------------------
+
+    def _estimate_balance(self, bars: dict[str, BarData]) -> float:
+        """估算当前账户总价值（现金 + 持仓市值）"""
+        holding_value = 0.0
+        for symbol, pos in self.pos_data.items():
+            if pos > 0:
+                bar = bars.get(symbol)
+                if bar and bar.close_price:
+                    holding_value += bar.close_price * pos
+        return self.get_cash_available() + holding_value
 
     def _clear_tracking(self, vt_symbol: str) -> None:
         self.entry_prices.pop(vt_symbol, None)

@@ -35,7 +35,9 @@ from vnpy.alpha.strategy import BacktestingEngine
 from hs300_top10.data.loader import get_lab, discover_symbols
 from hs300_top10.model.rolling_trainer import rolling_train
 from hs300_top10.strategy.hs300_top10_strategy import HS300Top10Strategy
-from hs300_top10.strategy.config import StrategyConfig, BASELINE_V10, OPTIMIZED_V11
+from hs300_top10.strategy.config import (
+    StrategyConfig, BASELINE_V10, OPTIMIZED_V11, OPTIMIZED_V12,
+)
 from hs300_top10.backtest.evaluation import (
     print_metrics,
     show_charts,
@@ -514,13 +516,13 @@ def main() -> None:
                         help="仅回测（使用上次训练的信号缓存）")
     parser.add_argument("--skip-download", action="store_true",
                         help="跳过数据下载（使用已有 lab 数据）")
-    parser.add_argument("--config", choices=["v1.0", "v1.1", "compare"], default="v1.1",
-                        help="策略配置版本 (默认 v1.1，compare=同时运行v1.0和v1.1)")
+    parser.add_argument("--config", choices=["v1.0", "v1.1", "v1.2", "compare"], default="v1.2",
+                        help="策略配置版本 (默认 v1.2，compare=同时运行所有版本)")
     parser.add_argument("--config-file", type=str, default=None,
                         help="自定义配置文件路径 (JSON)")
     args = parser.parse_args()
 
-    config_map = {"v1.0": BASELINE_V10, "v1.1": OPTIMIZED_V11}
+    config_map = {"v1.0": BASELINE_V10, "v1.1": OPTIMIZED_V11, "v1.2": OPTIMIZED_V12}
 
     if args.config_file:
         config = StrategyConfig.from_json(args.config_file)
