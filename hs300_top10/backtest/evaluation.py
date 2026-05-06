@@ -125,27 +125,33 @@ def export_report(
     except Exception as e:
         print(f"  [报告] 逐日盈亏导出失败: {e}")
 
-    # 3. 成交记录 CSV
+    # 3. 成交记录 CSV（含触发原因）
     trades_path = out / "trades.csv"
+    trade_log_df = None
     try:
-        trades = engine.get_all_trades()
-        if trades:
-            trade_rows = []
-            for t in trades:
-                trade_rows.append({
-                    "datetime": str(t.datetime),
-                    "vt_symbol": t.vt_symbol,
-                    "direction": t.direction.value,
-                    "offset": t.offset.value,
-                    "price": t.price,
-                    "volume": t.volume,
-                    "tradeid": t.tradeid,
-                })
-            trade_df = pl.DataFrame(trade_rows)
-            trade_df.write_csv(trades_path)
-            print(f"  [报告] 成交记录 ({len(trades)} 笔) -> {trades_path}")
+        strategy = engine.strategy
+        if hasattr(strategy, "trade_log") and strategy.trade_log:
+            trade_log_df = pl.DataFrame(strategy.trade_log)
+            trade_log_df.write_csv(trades_path)
+            print(f"  [报告] 成交记录 ({trade_log_df.height} 笔, 含触发原因) -> {trades_path}")
         else:
-            print("  [报告] 无成交记录")
+            trades = engine.get_all_trades()
+            if trades:
+                trade_rows = []
+                for t in trades:
+                    trade_rows.append({
+                        "datetime": str(t.datetime),
+                        "vt_symbol": t.vt_symbol,
+                        "direction": t.direction.value,
+                        "price": t.price,
+                        "volume": t.volume,
+                        "reason": "",
+                    })
+                trade_log_df = pl.DataFrame(trade_rows)
+                trade_log_df.write_csv(trades_path)
+                print(f"  [报告] 成交记录 ({len(trades)} 笔) -> {trades_path}")
+            else:
+                print("  [报告] 无成交记录")
     except Exception as e:
         print(f"  [报告] 成交记录导出失败: {e}")
 
@@ -178,6 +184,23 @@ def export_report(
             print(f"  [报告] 超额收益图 -> {excess_path}")
     except Exception as e:
         print(f"  [报告] 超额收益图导出失败: {e}")
+
+    # 7. 交易信号图 HTML（资金曲线 + 买卖点标记 + 触发原因）
+    trade_chart_path = out / "trade_signals.html"
+    try:
+        fig = _build_trade_signal_chart(engine, trade_log_df)
+        if fig is not None:
+            fig.write_html(str(trade_chart_path), include_plotlyjs="cdn")
+            print(f"  [报告] 交易信号图 -> {trade_chart_path}")
+    except Exception as e:
+        print(f"  [报告] 交易信号图导出失败: {e}")
+
+    # 8. 个股交易详情图（top 10 高频交易股票）
+    try:
+        if trade_log_df is not None and not trade_log_df.is_empty():
+            export_stock_details(engine, trade_log_df, output_dir, top_n=10)
+    except Exception as e:
+        print(f"  [报告] 个股详情图导出失败: {e}")
 
 
 # ══════════════════════════════════════════════════════════
@@ -340,3 +363,438 @@ def _build_pnl_chart(df: pl.DataFrame) -> go.Figure:
         yaxis=dict(showgrid=True, gridcolor="LightGray"),
     )
     return fig
+
+
+REASON_COLORS: dict[str, str] = {
+    "signal_buy": "#2ca02c",
+    "rebalance_out": "#1f77b4",
+    "stop_loss": "#d62728",
+    "abs_stop_cap": "#e377c2",
+    "trailing_tp": "#ff7f0e",
+    "max_hold": "#9467bd",
+    "portfolio_stop": "#8c564b",
+    "market_filter": "#7f7f7f",
+    "unknown": "#bcbd22",
+}
+
+REASON_LABELS: dict[str, str] = {
+    "signal_buy": "买入（信号）",
+    "rebalance_out": "卖出（调仓换股）",
+    "stop_loss": "卖出（止损）",
+    "abs_stop_cap": "卖出（绝对止损）",
+    "trailing_tp": "卖出（追踪止盈）",
+    "max_hold": "卖出（超时退出）",
+    "portfolio_stop": "卖出（组合止损）",
+    "market_filter": "卖出（市场过滤）",
+    "unknown": "卖出（未知）",
+}
+
+
+def _classify_reason(reason_str: str) -> str:
+    """将详细原因字符串归类到大类"""
+    if not reason_str:
+        return "unknown"
+    for key in ["abs_stop_cap", "stop_loss", "trailing_tp", "max_hold",
+                "portfolio_stop", "market_filter", "rebalance_out", "signal_buy"]:
+        if key in reason_str:
+            return key
+    return "unknown"
+
+
+def _detect_direction_values(tlog: pl.DataFrame) -> tuple[str, str]:
+    """自动检测 direction 列中买入/卖出的值"""
+    vals = set(tlog["direction"].unique().to_list())
+    if "Long" in vals:
+        return "Long", "Short"
+    return "多", "空"
+
+
+def _build_trade_signal_chart(
+    engine: BacktestingEngine,
+    trade_log_df: pl.DataFrame | None,
+) -> go.Figure | None:
+    """构建交易信号可视化图
+
+    Panel 1: 资金曲线 + 买卖点标记
+    Panel 2: 持仓数量随时间变化
+    Panel 3: 卖出原因统计（按月分布堆叠柱状图）
+    Panel 4: 单笔交易盈亏散点图（按卖出原因着色）
+    """
+    if trade_log_df is None or trade_log_df.is_empty():
+        print("  [报告] 无交易日志，跳过交易信号图")
+        return None
+
+    df = engine.daily_df
+
+    tlog = trade_log_df.with_columns(
+        pl.col("datetime").str.slice(0, 10).alias("date_str"),
+        pl.col("reason").map_elements(_classify_reason, return_dtype=pl.Utf8).alias("reason_cat"),
+    )
+
+    long_val, short_val = _detect_direction_values(tlog)
+
+    buys = tlog.filter(pl.col("direction") == long_val)
+    sells = tlog.filter(pl.col("direction") == short_val)
+
+    buy_by_date = buys.group_by("date_str").agg(
+        pl.col("vt_symbol").count().alias("count"),
+        pl.col("vt_symbol").alias("symbols"),
+        pl.col("price").alias("prices"),
+    )
+    sell_by_date = sells.group_by("date_str").agg(
+        pl.col("vt_symbol").count().alias("count"),
+        pl.col("vt_symbol").alias("symbols"),
+        pl.col("reason").alias("reasons"),
+        pl.col("pnl_pct").alias("pnls"),
+    )
+
+    fig = make_subplots(
+        rows=4, cols=1,
+        subplot_titles=[
+            "资金曲线与交易时点",
+            "每日持仓股票数",
+            "月度卖出原因分布",
+            "单笔交易盈亏（按卖出原因着色）",
+        ],
+        vertical_spacing=0.07,
+        row_heights=[0.3, 0.2, 0.25, 0.25],
+    )
+
+    # ── Panel 1: 资金曲线 + 买卖标记 ──
+    fig.add_trace(
+        go.Scatter(x=df["date"], y=df["balance"], mode="lines",
+                   line=dict(color="#333", width=1.5), name="Balance",
+                   showlegend=False),
+        row=1, col=1,
+    )
+
+    balance_map = {str(d): b for d, b in zip(df["date"].to_list(), df["balance"].to_list())}
+
+    if not buy_by_date.is_empty():
+        bx, by, bt = [], [], []
+        for row in buy_by_date.iter_rows(named=True):
+            d = row["date_str"]
+            if d in balance_map:
+                bx.append(d)
+                by.append(balance_map[d])
+                syms = row["symbols"][:5]
+                extra = f" +{row['count'] - 5}..." if row["count"] > 5 else ""
+                bt.append(f"买入 {row['count']} 只: {', '.join(syms)}{extra}")
+        fig.add_trace(
+            go.Scatter(x=bx, y=by, mode="markers", name="买入",
+                       marker=dict(symbol="triangle-up", size=8, color="#2ca02c", opacity=0.8),
+                       text=bt, hovertemplate="%{text}<br>日期: %{x}<br>资金: %{y:,.0f}<extra></extra>"),
+            row=1, col=1,
+        )
+
+    if not sell_by_date.is_empty():
+        sx, sy, st = [], [], []
+        for row in sell_by_date.iter_rows(named=True):
+            d = row["date_str"]
+            if d in balance_map:
+                sx.append(d)
+                sy.append(balance_map[d])
+                reasons = row["reasons"][:5]
+                syms = row["symbols"][:5]
+                detail_parts = [f"{s}({r})" for s, r in zip(syms, reasons)]
+                extra = f" +{row['count'] - 5}..." if row["count"] > 5 else ""
+                st.append(f"卖出 {row['count']} 只: {', '.join(detail_parts)}{extra}")
+        fig.add_trace(
+            go.Scatter(x=sx, y=sy, mode="markers", name="卖出",
+                       marker=dict(symbol="triangle-down", size=8, color="#d62728", opacity=0.8),
+                       text=st, hovertemplate="%{text}<br>日期: %{x}<br>资金: %{y:,.0f}<extra></extra>"),
+            row=1, col=1,
+        )
+
+    # ── Panel 2: 持仓数量（基于逐笔交易重建） ──
+    dates = [str(d) for d in df["date"].to_list()]
+    holdings: set[str] = set()
+    trade_events: dict[str, int] = {}
+    for row in tlog.sort("datetime").iter_rows(named=True):
+        d = row["date_str"]
+        sym = row["vt_symbol"]
+        if row["direction"] == long_val:
+            holdings.add(sym)
+        else:
+            holdings.discard(sym)
+        trade_events[d] = len(holdings)
+
+    pos_count_series = []
+    running_count = 0
+    for d in dates:
+        if d in trade_events:
+            running_count = trade_events[d]
+        pos_count_series.append(running_count)
+
+    fig.add_trace(
+        go.Scatter(x=dates, y=pos_count_series, mode="lines",
+                   fill="tozeroy", fillcolor="rgba(31,119,180,0.15)",
+                   line=dict(color="#1f77b4", width=1), name="持仓数",
+                   showlegend=False),
+        row=2, col=1,
+    )
+
+    # ── Panel 3: 月度卖出原因堆叠柱状图 ──
+    if not sells.is_empty():
+        monthly_reasons = (
+            sells.with_columns(
+                pl.col("datetime").str.slice(0, 7).alias("month"),
+            )
+            .group_by(["month", "reason_cat"])
+            .agg(pl.len().alias("count"))
+            .sort("month")
+        )
+
+        all_reasons = ["stop_loss", "abs_stop_cap", "trailing_tp", "max_hold",
+                       "rebalance_out", "portfolio_stop", "market_filter"]
+        for reason_key in all_reasons:
+            subset = monthly_reasons.filter(pl.col("reason_cat") == reason_key)
+            if not subset.is_empty():
+                fig.add_trace(
+                    go.Bar(
+                        x=subset["month"], y=subset["count"],
+                        name=REASON_LABELS.get(reason_key, reason_key),
+                        marker_color=REASON_COLORS.get(reason_key, "#999"),
+                    ),
+                    row=3, col=1,
+                )
+        fig.update_layout(barmode="stack")
+
+    # ── Panel 4: 单笔交易盈亏散点图 ──
+    if not sells.is_empty() and "pnl_pct" in sells.columns:
+        all_reasons = ["stop_loss", "abs_stop_cap", "trailing_tp", "max_hold",
+                       "rebalance_out", "portfolio_stop", "market_filter"]
+        for reason_key in all_reasons:
+            subset = sells.filter(pl.col("reason_cat") == reason_key)
+            if subset.is_empty():
+                continue
+            fig.add_trace(
+                go.Scatter(
+                    x=subset["date_str"],
+                    y=subset["pnl_pct"],
+                    mode="markers",
+                    name=REASON_LABELS.get(reason_key, reason_key),
+                    marker=dict(
+                        color=REASON_COLORS.get(reason_key, "#999"),
+                        size=5,
+                        opacity=0.7,
+                    ),
+                    text=[f"{s} ({r})" for s, r in zip(
+                        subset["vt_symbol"].to_list(), subset["reason"].to_list())],
+                    hovertemplate="%{text}<br>盈亏: %{y:.1f}%<extra></extra>",
+                    showlegend=False,
+                ),
+                row=4, col=1,
+            )
+        fig.add_hline(y=0, line_dash="dash", line_color="gray", row=4, col=1)
+
+    fig.update_layout(
+        height=1600, width=1200,
+        title_text="HS300 Top-10 交易信号分析",
+        plot_bgcolor="white", paper_bgcolor="white",
+    )
+    for i in range(1, 5):
+        fig.update_xaxes(showgrid=True, gridcolor="LightGray", row=i, col=1)
+        fig.update_yaxes(showgrid=True, gridcolor="LightGray", row=i, col=1)
+    fig.update_yaxes(title_text="资金", row=1, col=1)
+    fig.update_yaxes(title_text="持仓数", row=2, col=1)
+    fig.update_yaxes(title_text="笔数", row=3, col=1)
+    fig.update_yaxes(title_text="盈亏 (%)", row=4, col=1)
+
+    return fig
+
+
+def _build_stock_detail_chart(
+    engine: BacktestingEngine,
+    trade_log_df: pl.DataFrame,
+    vt_symbol: str,
+) -> go.Figure | None:
+    """构建个股维度交易详情图
+
+    Panel 1: 价格走势 + 买入/卖出标记（hover 显示原因和盈亏）
+    Panel 2: 持仓量变化
+    """
+    from vnpy.trader.object import BarData as _BarData
+
+    bars: list[_BarData] = engine.lab.load_bar_data(
+        vt_symbol, engine.interval, engine.start, engine.end
+    )
+    if not bars:
+        return None
+
+    bar_dates = [str(b.datetime)[:10] for b in bars]
+    bar_open = [b.open_price for b in bars]
+    bar_high = [b.high_price for b in bars]
+    bar_low = [b.low_price for b in bars]
+    bar_close = [b.close_price for b in bars]
+    bar_vol = [b.volume for b in bars]
+
+    long_val, short_val = _detect_direction_values(trade_log_df)
+    stock_trades = trade_log_df.filter(pl.col("vt_symbol") == vt_symbol).sort("datetime")
+    if stock_trades.is_empty():
+        return None
+
+    fig = make_subplots(
+        rows=3, cols=1,
+        subplot_titles=[
+            f"{vt_symbol} 价格与交易标记",
+            "成交量",
+            "持仓量变化",
+        ],
+        vertical_spacing=0.08,
+        row_heights=[0.5, 0.25, 0.25],
+        shared_xaxes=True,
+    )
+
+    # Panel 1: K 线
+    fig.add_trace(
+        go.Candlestick(
+            x=bar_dates, open=bar_open, high=bar_high, low=bar_low, close=bar_close,
+            name="K线", increasing_line_color="#d62728", decreasing_line_color="#2ca02c",
+            showlegend=False,
+        ),
+        row=1, col=1,
+    )
+
+    buys = stock_trades.filter(pl.col("direction") == long_val)
+    sells = stock_trades.filter(pl.col("direction") == short_val)
+
+    if not buys.is_empty():
+        fig.add_trace(
+            go.Scatter(
+                x=buys["datetime"].str.slice(0, 10),
+                y=buys["price"],
+                mode="markers",
+                name="买入",
+                marker=dict(symbol="triangle-up", size=12, color="#2ca02c",
+                            line=dict(width=1, color="black")),
+                text=[f"买入 vol={v:.0f}" for v in buys["volume"].to_list()],
+                hovertemplate="%{text}<br>价格: %{y:.2f}<br>日期: %{x}<extra></extra>",
+            ),
+            row=1, col=1,
+        )
+
+    if not sells.is_empty():
+        sell_texts = []
+        for row in sells.iter_rows(named=True):
+            sell_texts.append(
+                f"{row['reason']}<br>"
+                f"盈亏: {row['pnl_pct']:.1f}%, 持仓: {row['hold_days']}天"
+            )
+        fig.add_trace(
+            go.Scatter(
+                x=sells["datetime"].str.slice(0, 10),
+                y=sells["price"],
+                mode="markers",
+                name="卖出",
+                marker=dict(symbol="triangle-down", size=12, color="#d62728",
+                            line=dict(width=1, color="black")),
+                text=sell_texts,
+                hovertemplate="%{text}<br>价格: %{y:.2f}<br>日期: %{x}<extra></extra>",
+            ),
+            row=1, col=1,
+        )
+
+        # 持仓区间高亮
+        for i, buy_row in enumerate(buys.iter_rows(named=True)):
+            buy_date = buy_row["datetime"][:10]
+            matched_sell = sells.filter(
+                (pl.col("datetime") > buy_row["datetime"])
+            ).head(1)
+            if matched_sell.is_empty():
+                continue
+            sell_row = matched_sell.row(0, named=True)
+            sell_date = sell_row["datetime"][:10]
+            pnl = sell_row["pnl_pct"]
+            color = "rgba(0,200,0,0.08)" if pnl >= 0 else "rgba(255,0,0,0.08)"
+            fig.add_vrect(
+                x0=buy_date, x1=sell_date,
+                fillcolor=color, layer="below", line_width=0,
+                row=1, col=1,
+            )
+
+    # Panel 2: 成交量
+    colors = ["#d62728" if c >= o else "#2ca02c" for o, c in zip(bar_open, bar_close)]
+    fig.add_trace(
+        go.Bar(x=bar_dates, y=bar_vol, marker_color=colors, name="成交量",
+               showlegend=False, opacity=0.7),
+        row=2, col=1,
+    )
+
+    # Panel 3: 持仓量
+    pos = 0.0
+    pos_dates = []
+    pos_vals = []
+    trade_map: dict[str, float] = {}
+    for row in stock_trades.iter_rows(named=True):
+        d = row["datetime"][:10]
+        if row["direction"] == long_val:
+            trade_map[d] = trade_map.get(d, 0) + row["volume"]
+        else:
+            trade_map[d] = trade_map.get(d, 0) - row["volume"]
+
+    current_pos = 0.0
+    for d in bar_dates:
+        if d in trade_map:
+            current_pos += trade_map[d]
+            current_pos = max(0, current_pos)
+        pos_dates.append(d)
+        pos_vals.append(current_pos)
+
+    fig.add_trace(
+        go.Scatter(x=pos_dates, y=pos_vals, mode="lines",
+                   fill="tozeroy", fillcolor="rgba(255,165,0,0.15)",
+                   line=dict(color="#ff7f0e", width=1.5), name="持仓",
+                   showlegend=False),
+        row=3, col=1,
+    )
+
+    fig.update_layout(
+        height=900, width=1200,
+        title_text=f"{vt_symbol} 交易详情",
+        plot_bgcolor="white", paper_bgcolor="white",
+        xaxis_rangeslider_visible=False,
+    )
+    for i in range(1, 4):
+        fig.update_xaxes(showgrid=True, gridcolor="LightGray", row=i, col=1)
+        fig.update_yaxes(showgrid=True, gridcolor="LightGray", row=i, col=1)
+    fig.update_yaxes(title_text="价格", row=1, col=1)
+    fig.update_yaxes(title_text="成交量", row=2, col=1)
+    fig.update_yaxes(title_text="持仓量", row=3, col=1)
+
+    return fig
+
+
+def export_stock_details(
+    engine: BacktestingEngine,
+    trade_log_df: pl.DataFrame,
+    output_dir: str,
+    top_n: int = 10,
+) -> None:
+    """导出交易最频繁的 top_n 只个股详情图"""
+    out = Path(output_dir) / "stock_details"
+    out.mkdir(parents=True, exist_ok=True)
+
+    long_val, _ = _detect_direction_values(trade_log_df)
+
+    freq = (
+        trade_log_df
+        .filter(pl.col("direction") == long_val)
+        .group_by("vt_symbol")
+        .agg(pl.len().alias("trade_count"))
+        .sort("trade_count", descending=True)
+        .head(top_n)
+    )
+
+    symbols = freq["vt_symbol"].to_list()
+    print(f"  [报告] 生成 {len(symbols)} 只高频交易股票详情图 ...")
+
+    for sym in symbols:
+        try:
+            fig = _build_stock_detail_chart(engine, trade_log_df, sym)
+            if fig is not None:
+                path = out / f"{sym.replace('.', '_')}.html"
+                fig.write_html(str(path), include_plotlyjs="cdn")
+                print(f"    -> {path}")
+        except Exception as e:
+            print(f"    [!] {sym} 详情图失败: {e}")

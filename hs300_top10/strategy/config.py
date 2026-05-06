@@ -55,6 +55,20 @@ class StrategyConfig:
     cooldown_days: int = 0                    # 触发后冷却天数
     min_signal_spread: float = 0.0            # top1-topK 概率差距最小值
 
+    # ── V1.3 风控增强 ──
+    conditional_hold_extend: bool = False
+    hold_extend_min_pnl: float = 0.03
+    hold_extend_days: int = 2
+    absolute_stop_cap: float = 0.0
+    profit_lock_threshold: float = 0.0
+    profit_lock_trail_pct: float = 0.015
+    # 动量确认入场
+    momentum_filter: bool = False
+    momentum_lookback: int = 3
+    momentum_min_return: float = -0.03
+    # 调仓周期
+    rebalance_period: int = 1                # 1=每周, 2=双周
+
     # ── 模型参数 ──
     xgb_n_estimators: int = 500
     xgb_max_depth: int = 6
@@ -115,7 +129,6 @@ OPTIMIZED_V11 = StrategyConfig(
 OPTIMIZED_V12 = StrategyConfig(
     version="v1.2",
     description="V1.2: V1.1 + 集中持仓(top8) + 更低换手",
-    # 完全继承 V1.1 参数
     smooth_rebalance=True,
     max_replace_ratio=0.7,
     use_atr_stop=True,
@@ -131,6 +144,28 @@ OPTIMIZED_V12 = StrategyConfig(
     tp_activate_pct=0.04,
     tp_trail_pct=0.02,
     max_hold_days=5,
-    # V1.2 唯一变化：更集中的持仓
     top_k=8,
+)
+
+OPTIMIZED_V13 = StrategyConfig(
+    version="v1.3",
+    description="V1.3: V1.1 + 尾部风控 (实验版 — 执行层优化已趋近极限)",
+    # 完全继承 V1.1 核心参数（已验证为执行层最优）
+    smooth_rebalance=True,
+    max_replace_ratio=0.7,
+    use_atr_stop=True,
+    atr_stop_multiplier=2.0,
+    atr_stop_min=0.02,
+    atr_stop_max=0.05,
+    dynamic_k=True,
+    dynamic_k_min=5,
+    dynamic_k_prob_threshold=0.30,
+    weight_by_signal=True,
+    min_signal_prob=0.15,
+    stop_loss_pct=0.04,
+    tp_activate_pct=0.04,
+    tp_trail_pct=0.02,
+    max_hold_days=5,
+    # V1.3 仅添加尾部安全网（不影响正常运行，仅限制极端亏损）
+    absolute_stop_cap=0.10,
 )

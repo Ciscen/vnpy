@@ -63,9 +63,21 @@ class HS300Top10Strategy(AlphaStrategy):
     min_signal_prob: float = 0.0
 
     # V1.2 新增参数
-    portfolio_daily_loss_limit: float = 0.0   # 组合级单日最大亏损限制（0=禁用，正值如 0.025 = 2.5%）
-    cooldown_days: int = 0                    # 触发组合止损后的冷却天数（不开新仓）
-    min_signal_spread: float = 0.0            # 信号质量要求：top-1 和 top-K 概率差距最小值
+    portfolio_daily_loss_limit: float = 0.0
+    cooldown_days: int = 0
+    min_signal_spread: float = 0.0
+
+    # V1.3 新增参数
+    conditional_hold_extend: bool = False
+    hold_extend_min_pnl: float = 0.03
+    hold_extend_days: int = 2
+    absolute_stop_cap: float = 0.0
+    profit_lock_threshold: float = 0.0
+    profit_lock_trail_pct: float = 0.015
+    momentum_filter: bool = False
+    momentum_lookback: int = 3
+    momentum_min_return: float = -0.03
+    rebalance_period: int = 1              # 调仓周期（1=每周, 2=双周）
 
     def on_init(self) -> None:
         """策略初始化"""
@@ -81,17 +93,49 @@ class HS300Top10Strategy(AlphaStrategy):
         self._cooldown_remaining: int = 0
         self._prev_balance: float = 0.0
 
+        # 交易原因追踪
+        self._pending_sell_reasons: dict[str, str] = {}
+        self.trade_log: list[dict] = []
+
+        # V1.3: 条件延仓追踪
+        self._extended_symbols: dict[str, int] = {}
+        self._week_counter: int = 0  # 周计数器（用于双周调仓）
+
         self.write_log("HS300Top10Strategy 初始化完成")
 
     def on_trade(self, trade: TradeData) -> None:
-        """成交回调，更新持仓跟踪状态"""
+        """成交回调，更新持仓跟踪状态并记录交易日志"""
+        entry_price = trade.price
+        pnl_pct = 0.0
+        hold = 0
+
         if trade.direction == Direction.LONG:
+            reason = "signal_buy"
+            entry_price = trade.price
             self.entry_prices[trade.vt_symbol] = trade.price
             self.peak_prices[trade.vt_symbol] = trade.price
             self.hold_days[trade.vt_symbol] = 0
             self.tp_activated[trade.vt_symbol] = False
         elif trade.direction == Direction.SHORT:
+            reason = self._pending_sell_reasons.pop(trade.vt_symbol, "unknown")
+            entry_price = self.entry_prices.get(trade.vt_symbol, trade.price)
+            hold = self.hold_days.get(trade.vt_symbol, 0)
+            pnl_pct = (trade.price - entry_price) / entry_price if entry_price else 0
             self._clear_tracking(trade.vt_symbol)
+        else:
+            reason = "unknown"
+
+        self.trade_log.append({
+            "datetime": str(trade.datetime),
+            "vt_symbol": trade.vt_symbol,
+            "direction": trade.direction.value,
+            "price": trade.price,
+            "volume": trade.volume,
+            "reason": reason,
+            "entry_price": round(entry_price, 4),
+            "pnl_pct": round(pnl_pct * 100, 2),
+            "hold_days": hold,
+        })
 
     def on_bars(self, bars: dict[str, BarData]) -> None:
         """K 线切片回调 — 每日执行一次"""
@@ -102,8 +146,8 @@ class HS300Top10Strategy(AlphaStrategy):
         weekday = dt.weekday()
         pos_symbols = [s for s, p in self.pos_data.items() if p > 0]
 
-        # ── 0. 更新 ATR 和市场状态 ──
-        if self.use_atr_stop:
+        # ── 0. 更新 ATR / 价格历史 和市场状态 ──
+        if self.use_atr_stop or self.momentum_filter:
             self._update_atr(bars)
 
         if self.use_market_filter:
@@ -130,7 +174,15 @@ class HS300Top10Strategy(AlphaStrategy):
             pnl_pct = (bar.close_price - entry) / entry
 
             effective_sl = self._get_stop_loss(symbol, entry)
+
+            # V1.3: 绝对止损上限（优先级最高）
+            if self.absolute_stop_cap > 0 and pnl_pct <= -self.absolute_stop_cap:
+                self._pending_sell_reasons[symbol] = f"abs_stop_cap({pnl_pct*100:.1f}%)"
+                risk_sell.add(symbol)
+                continue
+
             if pnl_pct <= -effective_sl:
+                self._pending_sell_reasons[symbol] = f"stop_loss({pnl_pct*100:.1f}%)"
                 risk_sell.add(symbol)
                 continue
 
@@ -140,11 +192,32 @@ class HS300Top10Strategy(AlphaStrategy):
             if self.tp_activated.get(symbol, False):
                 peak = self.peak_prices.get(symbol, entry)
                 dd = (bar.close_price - peak) / peak
-                if dd <= -self.tp_trail_pct:
+
+                # V1.3: 阶梯止盈 — 盈利超阈值时收紧回撤容忍
+                trail = self.tp_trail_pct
+                if self.profit_lock_threshold > 0 and pnl_pct >= self.profit_lock_threshold:
+                    trail = self.profit_lock_trail_pct
+
+                if dd <= -trail:
+                    self._pending_sell_reasons[symbol] = f"trailing_tp(peak_dd={dd*100:.1f}%,trail={trail*100:.1f}%)"
                     risk_sell.add(symbol)
                     continue
 
-            if self.hold_days.get(symbol, 0) >= self.max_hold_days:
+            hold = self.hold_days.get(symbol, 0)
+            max_days = self.max_hold_days
+            extended = self._extended_symbols.get(symbol, 0)
+
+            # V1.3: 条件延仓 — 到期盈利 > 阈值则延长
+            if self.conditional_hold_extend and hold >= max_days:
+                if extended < self.hold_extend_days and pnl_pct >= self.hold_extend_min_pnl:
+                    self._extended_symbols[symbol] = extended + 1
+                    continue
+                self._pending_sell_reasons[symbol] = (
+                    f"max_hold({hold}d,ext={extended}d,pnl={pnl_pct*100:.1f}%)"
+                )
+                risk_sell.add(symbol)
+            elif hold >= max_days:
+                self._pending_sell_reasons[symbol] = f"max_hold({hold}d)"
                 risk_sell.add(symbol)
 
         for symbol in risk_sell:
@@ -158,6 +231,7 @@ class HS300Top10Strategy(AlphaStrategy):
                 if daily_ret <= -self.portfolio_daily_loss_limit:
                     for s in pos_symbols:
                         if s not in risk_sell:
+                            self._pending_sell_reasons[s] = f"portfolio_stop({daily_ret*100:.1f}%)"
                             self.set_target(s, 0)
                     self._cooldown_remaining = self.cooldown_days
             self._prev_balance = current_balance
@@ -165,8 +239,15 @@ class HS300Top10Strategy(AlphaStrategy):
         if self._cooldown_remaining > 0:
             self._cooldown_remaining -= 1
 
-        # ── 4. 周一：读取信号 → 调仓 ──
-        if weekday == 0 and self._cooldown_remaining <= 0:
+        # ── 4. 调仓日：读取信号 → 调仓 ──
+        if weekday == 0:
+            self._week_counter += 1
+        is_rebalance_day = (
+            weekday == 0
+            and self._cooldown_remaining <= 0
+            and self._week_counter % self.rebalance_period == 0
+        )
+        if is_rebalance_day:
             self._rebalance(bars, pos_symbols, risk_sell)
 
         # ── 5. 统一下单 ──
@@ -236,10 +317,10 @@ class HS300Top10Strategy(AlphaStrategy):
         if signal.is_empty():
             return
 
-        # 市场状态过滤：指数在 MA 以下时不开新仓
         if self.use_market_filter and not self._market_ok:
             for symbol in pos_symbols:
                 if symbol not in risk_sell:
+                    self._pending_sell_reasons[symbol] = "market_filter"
                     self.set_target(symbol, 0)
             return
 
@@ -257,6 +338,21 @@ class HS300Top10Strategy(AlphaStrategy):
                 effective_k = max(self.dynamic_k_min, self.top_k // 2)
 
         buy_candidates: list[str] = list(signal["vt_symbol"][:effective_k])
+
+        # V1.3: 动量确认入场 — 过滤近 N 日跌幅过大的股票
+        if self.momentum_filter:
+            filtered = []
+            for sym in buy_candidates:
+                history = self._price_history.get(sym)
+                if history and len(history) >= self.momentum_lookback:
+                    recent_close = history[-1][2]
+                    past_close = history[-self.momentum_lookback][2]
+                    ret = (recent_close - past_close) / past_close if past_close else 0
+                    if ret >= self.momentum_min_return:
+                        filtered.append(sym)
+                else:
+                    filtered.append(sym)
+            buy_candidates = filtered
 
         # 信号质量检查：top-1 与 top-K 概率差距过小则缩减
         if self.min_signal_spread > 0 and len(buy_candidates) >= 2:
@@ -282,6 +378,7 @@ class HS300Top10Strategy(AlphaStrategy):
         """全量调仓（V1.0 逻辑）"""
         for symbol in pos_symbols:
             if symbol not in buy_candidates and symbol not in risk_sell:
+                self._pending_sell_reasons[symbol] = "rebalance_out"
                 self.set_target(symbol, 0)
 
         cash = self.get_cash_available()
@@ -328,6 +425,7 @@ class HS300Top10Strategy(AlphaStrategy):
         actual_sell = sell_symbols[:max_sell]
 
         for symbol in actual_sell:
+            self._pending_sell_reasons[symbol] = "rebalance_out"
             self.set_target(symbol, 0)
 
         cash = self.get_cash_available()
@@ -384,6 +482,7 @@ class HS300Top10Strategy(AlphaStrategy):
         self.peak_prices.pop(vt_symbol, None)
         self.hold_days.pop(vt_symbol, None)
         self.tp_activated.pop(vt_symbol, None)
+        self._extended_symbols.pop(vt_symbol, None)
 
     @staticmethod
     def _current_dt(bars: dict[str, BarData]):
