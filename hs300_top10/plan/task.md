@@ -1,0 +1,22 @@
+- [/] 创建根目录 `hs300_top10/` 并添加 `README.md` 与 `requirements.txt`（包括 pandas, scikit-learn, xgboost, akshare, vnpy 等）
+- [/] **数据层**
+  - [/ ] 编写 `hs300_top10/data/download_data.py`（已完成）
+  - [/ ] 编写 `hs300_top10/data/loader.py`（已完成）
+- [/] **特征工程**
+  - [/ ] `hs300_top10/features/engineer.py`（已完成）
+  - [/ ] `hs300_top10/features/labeler.py`（已完成）
+- [ ] **模型层**
+  - [ ] `hs300_top10/model/trainer.py`
+  - [ ] `hs300_top10/model/rolling_trainer.py`
+  - [ ] `hs300_top10/model/predictor.py`
+- [ ] **策略实现**
+  - [ ] `hs300_top10/strategy/hs300_top10_strategy.py`
+- [ ] **回测入口**
+  - [ ] `hs300_top10/backtest/run_backtest.py`
+  - [ ] `hs300_top10/backtest/evaluation.py`
+- [ ] **测试**
+  - [ ] 为每个模块编写单元测试
+- [ ] **文档**
+  - [ ] 在 `hs300_top10/README.md` 中说明项目结构、依赖安装、数据下载、运行步骤
+
+*已完成的核心文件：download_data.py、loader.py、engineer.py、labeler.py。接下来将进入模型层实现。*
