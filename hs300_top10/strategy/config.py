@@ -66,8 +66,18 @@ class StrategyConfig:
     momentum_filter: bool = False
     momentum_lookback: int = 3
     momentum_min_return: float = -0.03
+    # 个股冷却
+    stock_cooldown_days: int = 0             # 止损后个股冷却天数（0=禁用）
     # 调仓周期
     rebalance_period: int = 1                # 1=每周, 2=双周
+
+    # ── V2.0 信号驱动持仓 ──
+    daily_signal: bool = False               # 是否使用日频信号模式
+    pool_size: int = 30                      # 月度候选池大小
+    signal_horizon: int = 3                  # 信号预测窗口（天）
+    entry_threshold: float = 0.50            # 新建仓最低信号概率
+    renew_threshold: float = 0.40            # 到期续仓最低信号概率
+    max_renewals: int = 3                    # 最大续期次数
 
     # ── 模型参数 ──
     xgb_n_estimators: int = 500
@@ -149,8 +159,7 @@ OPTIMIZED_V12 = StrategyConfig(
 
 OPTIMIZED_V13 = StrategyConfig(
     version="v1.3",
-    description="V1.3: V1.1 + 尾部风控 (实验版 — 执行层优化已趋近极限)",
-    # 完全继承 V1.1 核心参数（已验证为执行层最优）
+    description="V1.3: V1.2 + 个股止损冷却(10天)",
     smooth_rebalance=True,
     max_replace_ratio=0.7,
     use_atr_stop=True,
@@ -158,7 +167,7 @@ OPTIMIZED_V13 = StrategyConfig(
     atr_stop_min=0.02,
     atr_stop_max=0.05,
     dynamic_k=True,
-    dynamic_k_min=5,
+    dynamic_k_min=4,
     dynamic_k_prob_threshold=0.30,
     weight_by_signal=True,
     min_signal_prob=0.15,
@@ -166,6 +175,77 @@ OPTIMIZED_V13 = StrategyConfig(
     tp_activate_pct=0.04,
     tp_trail_pct=0.02,
     max_hold_days=5,
-    # V1.3 仅添加尾部安全网（不影响正常运行，仅限制极端亏损）
+    top_k=8,
+    stock_cooldown_days=10,
+)
+
+OPTIMIZED_V20 = StrategyConfig(
+    version="v2.0",
+    description="V2.0: 月度选池 + 信号驱动持仓（日频标签3日/2%）",
+    daily_signal=True,
+    pool_size=30,
+    signal_horizon=3,
+    entry_threshold=0.50,
+    renew_threshold=0.40,
+    max_renewals=3,
+    top_k=10,
+    stop_loss_pct=0.03,
+    tp_activate_pct=0.03,
+    tp_trail_pct=0.02,
+    max_hold_days=15,
+    smooth_rebalance=False,
+    use_atr_stop=True,
+    atr_stop_multiplier=2.0,
+    atr_stop_min=0.02,
+    atr_stop_max=0.05,
     absolute_stop_cap=0.10,
+    weight_by_signal=True,
+)
+
+OPTIMIZED_V21 = StrategyConfig(
+    version="v2.1",
+    description="V2.1: V2.0参数优化（收紧入场+延长持仓+快止损）",
+    daily_signal=True,
+    pool_size=20,
+    signal_horizon=5,
+    entry_threshold=0.60,
+    renew_threshold=0.45,
+    max_renewals=4,
+    top_k=10,
+    stop_loss_pct=0.04,
+    tp_activate_pct=0.04,
+    tp_trail_pct=0.02,
+    max_hold_days=20,
+    smooth_rebalance=False,
+    use_atr_stop=True,
+    atr_stop_multiplier=2.0,
+    atr_stop_min=0.02,
+    atr_stop_max=0.05,
+    absolute_stop_cap=0.07,
+    weight_by_signal=True,
+)
+
+OPTIMIZED_V22 = StrategyConfig(
+    version="v2.2",
+    description="V2.2: V2.1 + 保守组合风控（日亏5%清仓+2天冷却）",
+    daily_signal=True,
+    pool_size=20,
+    signal_horizon=5,
+    entry_threshold=0.60,
+    renew_threshold=0.45,
+    max_renewals=4,
+    top_k=10,
+    stop_loss_pct=0.04,
+    tp_activate_pct=0.04,
+    tp_trail_pct=0.02,
+    max_hold_days=20,
+    smooth_rebalance=False,
+    use_atr_stop=True,
+    atr_stop_multiplier=2.0,
+    atr_stop_min=0.02,
+    atr_stop_max=0.05,
+    absolute_stop_cap=0.07,
+    weight_by_signal=True,
+    portfolio_daily_loss_limit=0.05,
+    cooldown_days=2,
 )
