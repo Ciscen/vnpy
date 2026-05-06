@@ -11,8 +11,7 @@ hs300_top10/backtest/run_backtest.py
 from __future__ import annotations
 
 import sys
-import shelve
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from vnpy.trader.constant import Interval
@@ -23,6 +22,7 @@ from hs300_top10.data.loader import get_lab, discover_symbols
 from hs300_top10.model.rolling_trainer import rolling_train
 from hs300_top10.strategy.hs300_top10_strategy import HS300Top10Strategy
 from hs300_top10.backtest.evaluation import print_metrics, show_charts, export_report
+from hs300_top10.data.downloader import ensure_component_index
 from hs300_top10.pipeline_config import PIPELINE
 
 # ──────────────────────────────────────────────────
@@ -36,30 +36,6 @@ BACKTEST_END = PIPELINE.backtest_end
 CAPITAL = PIPELINE.capital
 
 REPORT_DIR = Path("hs300_top10") / "output"
-
-
-def _ensure_component_index(lab: AlphaLab, vt_symbols: list[str]) -> str:
-    """确保成分股索引存在"""
-    index_symbol = "HS300.SSE"
-    db_path = str(lab.component_path.joinpath(index_symbol))
-
-    try:
-        with shelve.open(db_path) as db:
-            if next(iter(db), None) is not None:
-                return index_symbol
-    except Exception:
-        pass
-
-    print("[准备] 写入成分股索引 ...")
-    start_dt = datetime(2016, 1, 1)
-    end_dt = datetime(2026, 12, 31)
-    with shelve.open(db_path) as db:
-        current = start_dt
-        while current <= end_dt:
-            db[current.strftime("%Y-%m-%d")] = vt_symbols
-            current += timedelta(days=1)
-    print(f"  成分股: {index_symbol} -> {len(vt_symbols)} 只")
-    return index_symbol
 
 
 def main() -> None:
@@ -76,7 +52,7 @@ def main() -> None:
         print("错误: lab 目录中无数据，请先运行 python -m hs300_top10.run_pipeline")
         sys.exit(1)
 
-    _ensure_component_index(lab, vt_symbols)
+    ensure_component_index(lab, vt_symbols)
 
     # ── Step 1: 滚动训练 → 信号 ──
     print("\n" + "=" * 60)
