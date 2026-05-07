@@ -2,6 +2,7 @@
 hs300_top10/run_live.py
 
 生产执行入口 — 每周一开盘前生成交易建议并推送飞书。
+当前策略版本由 CONFIG 决定（可在代码中切换）。
 
 用法::
 
@@ -43,7 +44,7 @@ from pathlib import Path
 import polars as pl
 
 from hs300_top10.pipeline_config import PIPELINE_LIVE
-from hs300_top10.strategy.config import OPTIMIZED_V13
+from hs300_top10.strategy.config import OPTIMIZED_V14
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,7 +55,7 @@ logger = logging.getLogger("run_live")
 
 SIGNAL_DIR = Path(__file__).parent / "live" / "signals"
 LOG_DIR = Path(__file__).parent / "live" / "logs"
-CONFIG = OPTIMIZED_V13
+CONFIG = OPTIMIZED_V14
 
 
 # ══════════════════════════════════════════════════
@@ -275,7 +276,7 @@ def notify_feishu(signal_json: dict) -> bool:
             try:
                 client.send_text_message(
                     chat_id,
-                    f"[HS300 V1.3] {signal_json['date']} 调仓建议已生成，"
+                    f"[HS300 {CONFIG.version}] {signal_json['date']} 调仓建议已生成，"
                     f"买{signal_json['summary']['buys']}卖{signal_json['summary']['sells']}"
                     f"持{signal_json['summary']['holds']}，详见本地日志。",
                 )
@@ -291,7 +292,7 @@ def notify_feishu(signal_json: dict) -> bool:
 # ══════════════════════════════════════════════════
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="HS300 V1.3 生产执行")
+    parser = argparse.ArgumentParser(description=f"HS300 {CONFIG.version} 生产执行")
     parser.add_argument("--date", type=str, default=None,
                         help="指定执行日期 (YYYY-MM-DD)，默认今天")
     parser.add_argument("--retrain", action="store_true",
@@ -310,7 +311,7 @@ def main() -> None:
     issues = IssueCollector()
 
     logger.info("═" * 60)
-    logger.info("  HS300 V1.3 生产执行")
+    logger.info("  HS300 %s 生产执行", CONFIG.version.upper())
     logger.info("  日期: %s (%s)", today, "周" + "一二三四五六日"[today.weekday()])
     logger.info("  运行ID: %s", run_id)
     logger.info("  参数: force_run=%s, retrain=%s, dry_run=%s, "

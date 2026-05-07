@@ -33,7 +33,7 @@ from hs300_top10.model.rolling_trainer import rolling_train, rolling_train_daily
 from hs300_top10.strategy.hs300_top10_strategy import HS300Top10Strategy
 from hs300_top10.strategy.config import (
     StrategyConfig, BASELINE_V10, OPTIMIZED_V11, OPTIMIZED_V12,
-    OPTIMIZED_V13,
+    OPTIMIZED_V13, OPTIMIZED_V14,
     OPTIMIZED_V20,
     OPTIMIZED_V21,
     OPTIMIZED_V22,
@@ -253,7 +253,7 @@ def main() -> None:
                         help="仅回测（使用上次训练的信号缓存）")
     parser.add_argument("--skip-download", action="store_true",
                         help="跳过数据下载（使用已有 lab 数据）")
-    parser.add_argument("--config", choices=["v1.0", "v1.1", "v1.2", "v1.3", "v2.0", "v2.1", "v2.2", "compare"], default="v1.3",
+    parser.add_argument("--config", choices=["v1.0", "v1.1", "v1.2", "v1.3", "v1.4", "v2.0", "v2.1", "v2.2", "compare"], default="v1.3",
                         help="策略配置版本 (默认 v1.3，compare=同时运行所有版本)")
     parser.add_argument("--config-file", type=str, default=None,
                         help="自定义配置文件路径 (JSON)")
@@ -262,6 +262,7 @@ def main() -> None:
     config_map = {
         "v1.0": BASELINE_V10, "v1.1": OPTIMIZED_V11,
         "v1.2": OPTIMIZED_V12, "v1.3": OPTIMIZED_V13,
+        "v1.4": OPTIMIZED_V14,
         "v2.0": OPTIMIZED_V20,
         "v2.1": OPTIMIZED_V21,
         "v2.2": OPTIMIZED_V22,

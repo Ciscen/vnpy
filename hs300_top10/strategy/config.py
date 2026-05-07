@@ -179,6 +179,28 @@ OPTIMIZED_V13 = StrategyConfig(
     stock_cooldown_days=10,
 )
 
+OPTIMIZED_V14 = StrategyConfig(
+    version="v1.4",
+    description="V1.4: V1.3 + 集中持仓(top5)",
+    smooth_rebalance=True,
+    max_replace_ratio=0.7,
+    use_atr_stop=True,
+    atr_stop_multiplier=2.0,
+    atr_stop_min=0.02,
+    atr_stop_max=0.05,
+    dynamic_k=True,
+    dynamic_k_min=3,
+    dynamic_k_prob_threshold=0.30,
+    weight_by_signal=True,
+    min_signal_prob=0.15,
+    stop_loss_pct=0.04,
+    tp_activate_pct=0.04,
+    tp_trail_pct=0.02,
+    max_hold_days=5,
+    top_k=5,
+    stock_cooldown_days=10,
+)
+
 OPTIMIZED_V20 = StrategyConfig(
     version="v2.0",
     description="V2.0: 月度选池 + 信号驱动持仓（日频标签3日/2%）",

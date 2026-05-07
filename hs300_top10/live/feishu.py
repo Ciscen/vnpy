@@ -515,7 +515,7 @@ def build_rebalance_card(
             "template": header_template,
             "title": {
                 "tag": "plain_text",
-                "content": f"HS300 V1.3 周度调仓建议 | {signal_date}{title_suffix}",
+                "content": f"HS300 周度调仓建议 | {signal_date}{title_suffix}",
             },
         },
         "elements": elements,
