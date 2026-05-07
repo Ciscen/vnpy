@@ -56,19 +56,51 @@ CONFIG = OPTIMIZED_V13
 # 交易日判断
 # ══════════════════════════════════════════════════
 
-def is_trading_day(d: date) -> bool:
-    """简单判断：工作日即交易日（不处理节假日）。
+_TRADING_CAL_CACHE: set[date] | None = None
 
-    生产环境可替换为 akshare 交易日历查询。
-    """
+
+def _load_trading_calendar() -> set[date]:
+    """加载 A 股交易日历（akshare），缓存到模块级变量。"""
+    global _TRADING_CAL_CACHE
+    if _TRADING_CAL_CACHE is not None:
+        return _TRADING_CAL_CACHE
+    try:
+        import akshare as ak
+        df = ak.tool_trade_date_hist_sina()
+        _TRADING_CAL_CACHE = {
+            d.date() if hasattr(d, "date") else d
+            for d in df["trade_date"]
+        }
+        logger.debug("交易日历加载成功: %d 天", len(_TRADING_CAL_CACHE))
+    except Exception as e:
+        logger.warning("交易日历加载失败 (%s)，降级为工作日判断", e)
+        _TRADING_CAL_CACHE = set()
+    return _TRADING_CAL_CACHE
+
+
+def is_trading_day(d: date) -> bool:
+    """判断是否为 A 股交易日。优先查交易日历，降级为工作日判断。"""
+    cal = _load_trading_calendar()
+    if cal:
+        return d in cal
     return d.weekday() < 5
 
 
-def is_first_monday_of_month(d: date) -> bool:
-    """判断是否为当月第一个周一。"""
-    if d.weekday() != 0:
-        return False
-    return d.day <= 7
+def is_first_rebalance_of_month(d: date) -> bool:
+    """判断是否为当月第一次调仓日。
+
+    逻辑：找到当月第一个周一，如果该周一是交易日则为调仓日；
+    否则顺延到该周第一个交易日。
+    """
+    first_of_month = d.replace(day=1)
+    days_to_monday = (7 - first_of_month.weekday()) % 7
+    first_monday = first_of_month + timedelta(days=days_to_monday)
+
+    for offset in range(5):
+        candidate = first_monday + timedelta(days=offset)
+        if is_trading_day(candidate):
+            return d == candidate
+    return False
 
 
 # ══════════════════════════════════════════════════
@@ -240,9 +272,27 @@ def main() -> None:
         if not is_trading_day(today):
             logger.info("非交易日，跳过")
             return
-        if today.weekday() != 0:
-            logger.info("非周一，V1.3 不调仓，跳过")
+
+        # V1.3 周频策略：仅在每周第一个交易日执行
+        # 正常情况为周一；若周一是节假日则顺延到该周第一个交易日
+        monday_of_week = today - timedelta(days=today.weekday())
+        if monday_of_week == today:
+            pass  # 周一且是交易日 → 正常执行
+        elif is_trading_day(monday_of_week):
+            logger.info("周一是交易日但今天不是周一，跳过")
             return
+        else:
+            # 周一非交易日，检查今天是否是该周第一个交易日
+            first_trading_day = None
+            for offset in range(5):
+                candidate = monday_of_week + timedelta(days=offset)
+                if is_trading_day(candidate):
+                    first_trading_day = candidate
+                    break
+            if today != first_trading_day:
+                logger.info("非本周首个交易日，跳过")
+                return
+            logger.info("周一非交易日，顺延至今日（%s）执行", today)
 
     # ── Phase 1: 增量下载 ──
     resolved = PIPELINE_LIVE.resolve(ref_date=today)
@@ -264,7 +314,7 @@ def main() -> None:
         logger.info("Phase 1: 跳过下载 (--skip-download)")
 
     # ── Phase 2: 训练 / 加载信号 ──
-    need_retrain = args.retrain or is_first_monday_of_month(today)
+    need_retrain = args.retrain or is_first_rebalance_of_month(today)
 
     if need_retrain:
         logger.info("Phase 2: 月度重新训练模型 ...")
