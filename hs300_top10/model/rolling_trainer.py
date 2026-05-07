@@ -454,8 +454,10 @@ def predict_live(
     )
 
     if predict_pool.is_empty():
+        # 数据截至日可能早于 target_date（例如周末/节假日/数据延迟），
+        # 向前搜索最近可用的周一数据，最多回溯 14 天
         nearby = monday_with_labels.filter(
-            pl.col("datetime") >= pl.lit(target_dt - timedelta(days=3))
+            pl.col("datetime") >= pl.lit(target_dt - timedelta(days=14))
         ).filter(
             pl.col("datetime") <= pl.lit(target_dt + timedelta(days=3))
         )
@@ -466,7 +468,7 @@ def predict_live(
             )
             print(f"  [注意] 目标日期 {target_date} 无数据，使用最近日期 {actual_date.date()}")
         else:
-            raise RuntimeError(f"目标日期 {target_date} 附近无可用数据")
+            raise RuntimeError(f"目标日期 {target_date} 附近 14 天内无可用数据")
 
     X_pred = predict_pool.select(feature_cols).to_numpy()
     probas = clf.predict_proba(X_pred)[:, 1]
