@@ -62,6 +62,10 @@ ls hs300_topk/output/v1.4/
 | `wiki:wiki:readonly` | 读取知识库文档（如果用知识库） |
 | `sheets:spreadsheet` | 读取电子表格（如果用电子表格） |
 | `im:message:send_as_bot` | 发送消息 |
+| `im:message.p2p_msg:readonly` | 机器人接收私聊消息 |
+| `im:message.group_msg:readonly` | 机器人接收群聊消息 |
+| `im:resource` | 文件上传（/fetch 命令） |
+| `im:message:send_multi_dept_as_bot` | 跨部门发消息（可选） |
 
 ### 3.3 添加机器人
 
@@ -218,16 +222,68 @@ hs300_topk/live/
 | 非周一执行 | 自动跳过（周频策略） |
 | 目标日期无行情数据 | 自动回退到 14 天内最近可用数据 |
 
+## 飞书机器人（可选）
+
+除了 cron 定时调度，还可以启动飞书机器人服务，通过聊天命令触发操作。
+
+### 前置条件
+
+在飞书开放平台的应用后台:
+1. **事件订阅** → 启用 `im.message.receive_v1` 事件
+2. **机器人** → 启用机器人能力
+3. 应用权限中额外开通 `im:message:send_as_bot` 和 `im:resource`（文件上传）
+
+### 启动
+
+```bash
+./hs300_topk/run_bot.sh
+
+# 或直接执行
+source .env && .venv/bin/python -m hs300_topk.live.bot
+```
+
+机器人通过 WebSocket 长连接维持在线，断线自动重连。
+
+### 可用命令
+
+| 命令 | 说明 |
+|------|------|
+| `/rerun` | 重跑当日策略（跳过下载，快速执行） |
+| `/rerun full` | 重跑当日策略（含数据下载） |
+| `/retrain` | 强制重训模型 + 重跑（耗时较长） |
+| `/ls` | 查看 hs300_topk 文件树结构（深度4） |
+| `/fetch <path>` | 发送文件/文件夹（文件夹自动 zip），路径相对 hs300_topk/ |
+| `/status` | 当前持仓概况 + 最新信号日期 |
+| `/log [YYYY-MM-DD]` | 查看指定日期的执行日志（默认今天） |
+| `/signal [YYYY-MM-DD]` | 查看指定日期的交易建议摘要 |
+| `/health` | 系统健康检查（数据、模型、飞书连通性） |
+| `/help` | 显示命令帮助 |
+
+### 后台持续运行
+
+推荐用 `nohup` 或 `screen`/`tmux` 保持机器人在线：
+
+```bash
+# 方式 1: nohup
+nohup ./hs300_topk/run_bot.sh > hs300_topk/live/logs/bot.log 2>&1 &
+
+# 方式 2: tmux
+tmux new -s hs300-bot './hs300_topk/run_bot.sh'
+# Ctrl+B D 分离，tmux attach -t hs300-bot 重新连接
+```
+
 ## 操作闭环
 
 ```
-  周一 8:30    程序自动运行
+  周一 8:30    程序自动运行（或通过 /rerun 手动触发）
        ↓
   收到飞书通知  查看调仓建议（含价格区间、手续费、理由）
        ↓
-  9:30 开盘后  在建议价格区间内下限价单
+       ↓       如有上次调仓回顾差异，先确认原因
+       ↓
+  9:30 开盘后  先卖后买，在建议价格区间内下限价单
        ↓
   成交后      更新飞书持仓表格（股数、成本均价、可用资金）
        ↓
-  下周一 8:30  程序读取最新持仓，生成新的调仓建议
+  下周一 8:30  程序读取最新持仓，自动对账后生成新建议
 ```

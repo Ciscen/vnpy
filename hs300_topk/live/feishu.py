@@ -320,6 +320,7 @@ def build_rebalance_card(
     portfolio_after: dict | None = None,
     skipped_cooldowns: list[dict] | None = None,
     issues: list[str] | None = None,
+    last_rebalance_review: dict | None = None,
 ) -> dict:
     """根据交易建议构建飞书消息卡片（增强版）。
 
@@ -341,6 +342,8 @@ def build_rebalance_card(
         冷却期中被跳过的高信号股票。
     issues : list[str] | None
         执行过程中的告警和异常信息。
+    last_rebalance_review : dict | None
+        上次调仓对账结果。
     """
     buys = [a for a in actions if a["action"] == "BUY"]
     sells = [a for a in actions if a["action"] == "SELL"]
@@ -387,6 +390,33 @@ def build_rebalance_card(
                 f"{_pnl_str(pnl)} | {mkt:,.0f} ({wt:.1f}%) | {day_str}"
             )
         elements.append({"tag": "markdown", "content": "\n".join(detail_lines)})
+        elements.append({"tag": "hr"})
+
+    # ── 上次调仓回顾 ──
+    if last_rebalance_review and last_rebalance_review.get("issue_count", 0) > 0:
+        review_items = last_rebalance_review.get("items", [])
+        discrepancies = [i for i in review_items if i["type"] != "matched"]
+        if discrepancies:
+            rv_lines = [
+                f"**🔍 上次调仓回顾** ({last_rebalance_review.get('prev_date', '?')})"
+            ]
+            for d in discrepancies:
+                icon = {"unexecuted": "⚠️", "partial": "🔶", "unexpected": "❓"}.get(
+                    d["type"], "❔"
+                )
+                rv_lines.append(f"  {icon} {d['name']} {d['symbol'][:6]} — {d['detail']}")
+            matched = last_rebalance_review.get("matched_count", 0)
+            total = last_rebalance_review.get("total_actions", 0)
+            rv_lines.append(f"\n  匹配: {matched}/{total}  差异: {len(discrepancies)}")
+            elements.append({"tag": "markdown", "content": "\n".join(rv_lines)})
+            elements.append({"tag": "hr"})
+
+    # ── 操作顺序提示 ──
+    if sells and buys:
+        elements.append({
+            "tag": "markdown",
+            "content": "📌 **建议操作顺序**: 先卖出回收资金 → 再买入新标的，避免资金不足",
+        })
         elements.append({"tag": "hr"})
 
     # ── 调仓操作 ──

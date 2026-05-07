@@ -162,6 +162,151 @@ class IssueCollector:
 
 
 # ══════════════════════════════════════════════════
+# 上次调仓对账
+# ══════════════════════════════════════════════════
+
+def compare_with_last_signal(
+    portfolio: "Portfolio",
+    today: date,
+) -> dict | None:
+    """对比上次信号建议 vs 当前实际持仓，发现未执行的操作。
+
+    Returns
+    -------
+    dict | None
+        对账结果，包含 matched/unexecuted/unexpected 三类条目；
+        如果没有上次信号则返回 None。
+    """
+    signal_files = sorted(SIGNAL_DIR.glob("*.json"), reverse=True)
+    prev_file = None
+    for f in signal_files:
+        try:
+            sig_date = date.fromisoformat(f.stem)
+            if sig_date < today:
+                prev_file = f
+                break
+        except ValueError:
+            continue
+
+    if prev_file is None:
+        logger.info("  无历史信号文件，跳过对账")
+        return None
+
+    prev_data = json.loads(prev_file.read_text(encoding="utf-8"))
+    prev_date = prev_data.get("date", prev_file.stem)
+    prev_actions = prev_data.get("actions", [])
+    logger.info("  对账基准: %s (run_id=%s)",
+                prev_date, prev_data.get("run_id", "?"))
+
+    current_syms = {p.vt_symbol for p in portfolio.positions}
+    current_map = {p.vt_symbol: p for p in portfolio.positions}
+
+    items: list[dict] = []
+
+    for a in prev_actions:
+        sym = a["symbol"]
+        name = a.get("name", sym[:6])
+        action = a["action"]
+
+        if action == "SELL":
+            if sym in current_syms:
+                items.append({
+                    "type": "unexecuted",
+                    "action": "SELL",
+                    "symbol": sym,
+                    "name": name,
+                    "shares": a.get("shares", 0),
+                    "detail": "建议卖出但仍在持仓中",
+                })
+            else:
+                items.append({
+                    "type": "matched",
+                    "action": "SELL",
+                    "symbol": sym,
+                    "name": name,
+                    "detail": "已卖出",
+                })
+
+        elif action == "BUY":
+            if sym in current_syms:
+                pos = current_map[sym]
+                expected = a.get("shares", 0)
+                actual = pos.shares
+                if expected > 0 and abs(actual - expected) > expected * 0.2:
+                    items.append({
+                        "type": "partial",
+                        "action": "BUY",
+                        "symbol": sym,
+                        "name": name,
+                        "expected_shares": expected,
+                        "actual_shares": actual,
+                        "detail": f"建议买{expected}股，实际{actual}股",
+                    })
+                else:
+                    items.append({
+                        "type": "matched",
+                        "action": "BUY",
+                        "symbol": sym,
+                        "name": name,
+                        "detail": f"已买入{actual}股",
+                    })
+            else:
+                items.append({
+                    "type": "unexecuted",
+                    "action": "BUY",
+                    "symbol": sym,
+                    "name": name,
+                    "shares": a.get("shares", 0),
+                    "detail": "建议买入但未出现在持仓中",
+                })
+
+        elif action == "HOLD":
+            if sym not in current_syms:
+                items.append({
+                    "type": "unexpected",
+                    "action": "HOLD→GONE",
+                    "symbol": sym,
+                    "name": name,
+                    "detail": "应持有但已不在持仓（手动卖出？）",
+                })
+
+    prev_all_syms = {a["symbol"] for a in prev_actions}
+    for sym in current_syms:
+        if sym not in prev_all_syms:
+            pos = current_map[sym]
+            items.append({
+                "type": "unexpected",
+                "action": "NEW",
+                "symbol": sym,
+                "name": pos.name,
+                "shares": pos.shares,
+                "detail": "上次信号中不存在（手动买入？）",
+            })
+
+    matched = [i for i in items if i["type"] == "matched"]
+    issues = [i for i in items if i["type"] != "matched"]
+
+    result = {
+        "prev_date": prev_date,
+        "prev_run_id": prev_data.get("run_id", "?"),
+        "total_actions": len(prev_actions),
+        "matched_count": len(matched),
+        "issue_count": len(issues),
+        "items": items,
+    }
+
+    if issues:
+        logger.info("  对账发现 %d 条差异:", len(issues))
+        for i in issues:
+            logger.info("    [%s] %s %s: %s",
+                        i["type"], i["action"], i["name"], i["detail"])
+    else:
+        logger.info("  对账完全匹配 (%d/%d)", len(matched), len(prev_actions))
+
+    return result
+
+
+# ══════════════════════════════════════════════════
 # 构建交易建议 JSON
 # ══════════════════════════════════════════════════
 
@@ -174,6 +319,7 @@ def build_signal_json(
     skipped_cooldowns: list[dict] | None = None,
     run_id: str = "",
     issues: list[str] | None = None,
+    last_rebalance_review: dict | None = None,
 ) -> dict:
     """构建完整的交易建议 JSON。"""
     action_dicts = []
@@ -225,6 +371,7 @@ def build_signal_json(
         },
         "model_info": model_info,
         "issues": issues or [],
+        "last_rebalance_review": last_rebalance_review,
     }
 
 
@@ -265,6 +412,7 @@ def notify_feishu(signal_json: dict) -> bool:
             portfolio_after=signal_json.get("portfolio_after"),
             skipped_cooldowns=signal_json.get("skipped_cooldowns"),
             issues=signal_json.get("issues"),
+            last_rebalance_review=signal_json.get("last_rebalance_review"),
         )
         client.send_card_message(chat_id, card)
         logger.info("飞书卡片消息推送成功 → chat_id=%s", chat_id[:8] + "...")
@@ -472,6 +620,15 @@ def main() -> None:
                         p.vt_symbol, p.name, p.shares, p.cost, p.entry_date)
     if stale > 48:
         issues.warn(f"持仓数据已 {stale:.0f} 小时未更新，建议先更新飞书文档")
+
+    # 与上次信号对比
+    logger.info("  与上次信号对比 ...")
+    rebalance_review = compare_with_last_signal(portfolio, today)
+    if rebalance_review and rebalance_review["issue_count"] > 0:
+        issues.warn(
+            f"上次调仓({rebalance_review['prev_date']})有 "
+            f"{rebalance_review['issue_count']} 条操作未按预期执行"
+        )
     logger.info("Phase 3 完成 (%.1fs)", time.monotonic() - t3)
 
     # ── Phase 4: 获取昨收价格 ──
@@ -562,6 +719,7 @@ def main() -> None:
         today, actions, portfolio, prices, model_info, skipped_cooldowns,
         run_id=run_id,
         issues=issues.items,
+        last_rebalance_review=rebalance_review,
     )
 
     SIGNAL_DIR.mkdir(parents=True, exist_ok=True)

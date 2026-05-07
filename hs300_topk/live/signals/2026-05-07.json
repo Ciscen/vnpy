@@ -1,6 +1,6 @@
 {
-  "run_id": "0d6d84629908",
-  "generated_at": "2026-05-07T19:58:11.070537",
+  "run_id": "279b924e94a0",
+  "generated_at": "2026-05-07T20:37:50.458746",
   "date": "2026-05-07",
   "strategy": "v1.4",
   "portfolio_before": {
@@ -8,7 +8,7 @@
     "position_value": 67057.0,
     "total_market_value": 79057.0,
     "position_count": 2,
-    "updated_at": "2026-05-07T19:58:09.747896",
+    "updated_at": "2026-05-07T20:37:48.597133",
     "stale_hours": 0.0
   },
   "portfolio_after": {
@@ -116,6 +116,72 @@
     "signal_count": 279
   },
   "issues": [
-    "⚠️ 今日信号文件已存在 (run_id=e639f6eab74d, 生成于 2026-05-07T19:39:58.429638)，本次执行将覆盖"
-  ]
+    "⚠️ 今日信号文件已存在 (run_id=9dddf4a01109, 生成于 2026-05-07T20:34:00.489967)，本次执行将覆盖",
+    "⚠️ 上次调仓(2026-05-04)有 7 条操作未按预期执行"
+  ],
+  "last_rebalance_review": {
+    "prev_date": "2026-05-04",
+    "prev_run_id": "?",
+    "total_actions": 7,
+    "matched_count": 0,
+    "issue_count": 7,
+    "items": [
+      {
+        "type": "unexecuted",
+        "action": "BUY",
+        "symbol": "600346.SSE",
+        "name": "600346",
+        "shares": 400,
+        "detail": "建议买入但未出现在持仓中"
+      },
+      {
+        "type": "unexecuted",
+        "action": "BUY",
+        "symbol": "600522.SSE",
+        "name": "600522",
+        "shares": 200,
+        "detail": "建议买入但未出现在持仓中"
+      },
+      {
+        "type": "unexecuted",
+        "action": "BUY",
+        "symbol": "002938.SZSE",
+        "name": "002938",
+        "shares": 100,
+        "detail": "建议买入但未出现在持仓中"
+      },
+      {
+        "type": "unexecuted",
+        "action": "BUY",
+        "symbol": "688126.SSE",
+        "name": "688126",
+        "shares": 400,
+        "detail": "建议买入但未出现在持仓中"
+      },
+      {
+        "type": "unexecuted",
+        "action": "BUY",
+        "symbol": "600176.SSE",
+        "name": "600176",
+        "shares": 200,
+        "detail": "建议买入但未出现在持仓中"
+      },
+      {
+        "type": "unexecuted",
+        "action": "SELL",
+        "symbol": "300394.SZSE",
+        "name": "天孚通信",
+        "shares": 200,
+        "detail": "建议卖出但仍在持仓中"
+      },
+      {
+        "type": "unexecuted",
+        "action": "SELL",
+        "symbol": "000063.SZSE",
+        "name": "中兴通讯",
+        "shares": 100,
+        "detail": "建议卖出但仍在持仓中"
+      }
+    ]
+  }
 }
