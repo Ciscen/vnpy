@@ -12,11 +12,14 @@ hs300_top10/live/feishu.py
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://open.feishu.cn/open-apis"
 
@@ -48,6 +51,7 @@ class FeishuClient:
         return self._token
 
     def _refresh_token(self) -> None:
+        logger.debug("刷新 tenant_access_token (app_id=%s...)", self.app_id[:8])
         resp = requests.post(
             f"{BASE_URL}/auth/v3/tenant_access_token/internal",
             json={"app_id": self.app_id, "app_secret": self.app_secret},
@@ -56,12 +60,14 @@ class FeishuClient:
         try:
             resp.raise_for_status()
         except requests.exceptions.HTTPError as e:
-            raise RuntimeError(f"HTTP Error: {e}, Response: {resp.text}")
+            raise RuntimeError(f"飞书认证 HTTP 错误: {resp.status_code}, {resp.text[:200]}")
         data = resp.json()
         if data.get("code") != 0:
-            raise RuntimeError(f"飞书认证失败: {data}")
+            raise RuntimeError(f"飞书认证业务错误: code={data.get('code')}, msg={data.get('msg')}")
         self._token = data["tenant_access_token"]
-        self._token_expires = time.time() + data.get("expire", 7200) - 60
+        expire = data.get("expire", 7200)
+        self._token_expires = time.time() + expire - 60
+        logger.debug("token 已刷新, 有效期 %ds", expire)
 
     def _headers(self) -> dict:
         return {
@@ -236,26 +242,17 @@ class FeishuClient:
     # ──────────────────────────────────────────────────
 
     def send_card_message(self, chat_id: str, card: dict) -> dict:
-        """向群/个人发送交互式卡片消息。
-
-        Parameters
-        ----------
-        chat_id : str
-            飞书 chat_id（群或个人）。
-        card : dict
-            飞书卡片 JSON 结构。
-
-        Returns
-        -------
-        dict
-            API 响应。
-        """
+        """向群/个人发送交互式卡片消息。"""
+        content_str = json.dumps(card, ensure_ascii=False)
+        logger.debug("发送卡片消息: chat_id=%s..., 内容长度=%d",
+                      chat_id[:8], len(content_str))
         body = {
             "receive_id": chat_id,
             "msg_type": "interactive",
-            "content": json.dumps(card, ensure_ascii=False),
+            "content": content_str,
         }
         receive_id_type = "open_id" if chat_id.startswith("ou_") else "chat_id"
+        t0 = time.time()
         resp = requests.post(
             f"{BASE_URL}/im/v1/messages",
             headers=self._headers(),
@@ -263,17 +260,26 @@ class FeishuClient:
             json=body,
             timeout=15,
         )
+        elapsed = time.time() - t0
         try:
             resp.raise_for_status()
         except requests.exceptions.HTTPError as e:
-            raise RuntimeError(f"HTTP Error: {e}, Response: {resp.text}")
+            raise RuntimeError(
+                f"发送卡片 HTTP 错误: {resp.status_code}, {resp.text[:300]}"
+            )
         data = resp.json()
         if data.get("code") != 0:
-            raise RuntimeError(f"发送消息失败: {data}")
+            raise RuntimeError(
+                f"发送卡片业务错误: code={data.get('code')}, msg={data.get('msg')}"
+            )
+        msg_id = data.get("data", {}).get("message_id", "?")
+        logger.info("卡片消息发送成功: message_id=%s (%.1fs)", msg_id, elapsed)
         return data
 
     def send_text_message(self, chat_id: str, text: str) -> dict:
         """发送纯文本消息（简单场景/降级方案）。"""
+        logger.debug("发送文本消息: chat_id=%s..., 长度=%d",
+                      chat_id[:8], len(text))
         body = {
             "receive_id": chat_id,
             "msg_type": "text",
@@ -290,7 +296,9 @@ class FeishuClient:
         try:
             resp.raise_for_status()
         except requests.exceptions.HTTPError as e:
-            raise RuntimeError(f"HTTP Error: {e}, Response: {resp.text}")
+            raise RuntimeError(
+                f"发送文本 HTTP 错误: {resp.status_code}, {resp.text[:300]}"
+            )
         return resp.json()
 
 
@@ -311,6 +319,7 @@ def build_rebalance_card(
     portfolio_before: dict | None = None,
     portfolio_after: dict | None = None,
     skipped_cooldowns: list[dict] | None = None,
+    issues: list[str] | None = None,
 ) -> dict:
     """根据交易建议构建飞书消息卡片（增强版）。
 
@@ -330,6 +339,8 @@ def build_rebalance_card(
         操作后预期持仓概况。
     skipped_cooldowns : list[dict] | None
         冷却期中被跳过的高信号股票。
+    issues : list[str] | None
+        执行过程中的告警和异常信息。
     """
     buys = [a for a in actions if a["action"] == "BUY"]
     sells = [a for a in actions if a["action"] == "SELL"]
@@ -467,6 +478,14 @@ def build_rebalance_card(
         elements.append({"tag": "markdown", "content": "\n".join(after_lines)})
         elements.append({"tag": "hr"})
 
+    # ── 执行告警 ──
+    if issues:
+        issue_lines = ["**🚨 执行过程告警**"]
+        for item in issues:
+            issue_lines.append(f"  {item}")
+        elements.append({"tag": "markdown", "content": "\n".join(issue_lines)})
+        elements.append({"tag": "hr"})
+
     # ── 汇总 & 模型信息 ──
     footer_lines = []
     turnover = summary.get("estimated_turnover", 0)
@@ -487,12 +506,16 @@ def build_rebalance_card(
     footer_lines.append("⚠️ 操作完成后请及时更新飞书持仓表格（含股数、成本均价、可用资金），否则下周调仓建议会基于错误的持仓计算")
     elements.append({"tag": "markdown", "content": "\n".join(footer_lines)})
 
+    has_errors = any("❌" in item for item in (issues or []))
+    header_template = "red" if has_errors else "orange" if issues else "blue"
+    title_suffix = " ⚠" if issues and not has_errors else " ❌" if has_errors else ""
+
     card = {
         "header": {
-            "template": "blue",
+            "template": header_template,
             "title": {
                 "tag": "plain_text",
-                "content": f"HS300 V1.3 周度调仓建议 | {signal_date}",
+                "content": f"HS300 V1.3 周度调仓建议 | {signal_date}{title_suffix}",
             },
         },
         "elements": elements,

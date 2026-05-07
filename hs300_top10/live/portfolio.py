@@ -119,9 +119,11 @@ def parse_table_to_portfolio(table: list[list[str]]) -> Portfolio:
     支持"可用资金"作为列或独立行两种格式。
     """
     if len(table) < 2:
+        logger.warning("表格行数不足 (%d行)，返回空持仓", len(table))
         return Portfolio(updated_at=datetime.now().isoformat())
 
     header = [h.strip() for h in table[0]]
+    logger.debug("表头: %s", header)
     col_map: dict[str, int] = {}
     keywords = {
         "代码": "code", "名称": "name", "数量": "shares",
@@ -134,18 +136,20 @@ def parse_table_to_portfolio(table: list[list[str]]) -> Portfolio:
                 col_map[field_name] = idx
                 break
 
+    if "code" not in col_map:
+        logger.warning("未识别到'代码'列，将默认使用第0列; 表头=%s", header)
+
     positions: list[Position] = []
     cash = 0.0
     cash_found = False
+    skipped_rows = 0
 
-    # 如果"可用资金/现金"是列，从第一个有效值中提取
     cash_col_idx = col_map.get("cash", -1)
 
-    for row in table[1:]:
+    for row_idx, row in enumerate(table[1:], start=2):
         if not row or all(not c.strip() for c in row):
             continue
 
-        # 汇总行（可用资金/总资产等），从第二列提取金额
         if _is_summary_row(row):
             first = row[0].strip()
             if "资金" in first or "现金" in first or "cash" in first.lower():
@@ -154,19 +158,21 @@ def parse_table_to_portfolio(table: list[list[str]]) -> Portfolio:
                     if v > 0:
                         cash = v
                         cash_found = True
+                        logger.debug("行%d: 识别为资金行, cash=%.2f", row_idx, cash)
                         break
             continue
 
-        # 列级可用资金：只取第一个有效值
         if not cash_found and cash_col_idx != -1 and cash_col_idx < len(row):
             cv = _parse_float(row[cash_col_idx])
             if cv > 0:
                 cash = cv
                 cash_found = True
+                logger.debug("行%d: 从列提取 cash=%.2f", row_idx, cash)
 
         code_idx = col_map.get("code", 0)
         code = row[code_idx].strip() if code_idx < len(row) else ""
         if not code or not re.match(r"^\d{6}", code):
+            skipped_rows += 1
             continue
 
         name_idx = col_map.get("name", 1)
@@ -180,12 +186,30 @@ def parse_table_to_portfolio(table: list[list[str]]) -> Portfolio:
         entry_date = row[date_idx].strip() if date_idx < len(row) else ""
 
         if shares <= 0:
+            logger.debug("行%d: 股票 %s 数量≤0，跳过", row_idx, code)
+            skipped_rows += 1
             continue
+
+        if cost <= 0:
+            logger.warning("行%d: 股票 %s 成本价为0，将在计算时用昨收价替代",
+                           row_idx, code)
+
+        if shares % 100 != 0:
+            logger.warning("行%d: 股票 %s 持仓 %d 股不是100整数倍，请确认",
+                           row_idx, code, shares)
 
         positions.append(Position(
             symbol=code, name=name, shares=shares,
             cost=cost, entry_date=entry_date,
         ))
+
+    if not cash_found:
+        logger.warning("未找到可用资金字段，cash=0; 请检查飞书文档格式")
+    if skipped_rows > 0:
+        logger.debug("解析中跳过 %d 行（空行/非股票行/零持仓）", skipped_rows)
+
+    logger.info("表格解析完成: %d 只持仓, cash=%.2f, 跳过%d行",
+                len(positions), cash, skipped_rows)
 
     return Portfolio(
         cash=cash,
@@ -214,25 +238,28 @@ def load_portfolio_from_feishu(
     if not doc_id:
         raise RuntimeError("请设置环境变量 FEISHU_DOC_ID")
 
+    logger.info("从飞书加载持仓 (doc_id=%s...)", doc_id[:8])
     client = FeishuClient.from_env()
     
     obj_token = doc_id
     obj_type = "docx"
     
-    # 尝试判断是否为 Wiki Token
     try:
         node_info = client.get_wiki_node_info(doc_id)
         obj_token = node_info.get("obj_token", doc_id)
         obj_type = node_info.get("obj_type", "docx")
+        logger.debug("Wiki 节点: obj_type=%s, obj_token=%s...",
+                      obj_type, obj_token[:8])
     except Exception as e:
-        logger.debug(f"Wiki node check failed, falling back to direct docx access: {e}")
+        logger.debug("Wiki 查询失败，按 docx 处理: %s", e)
 
     if obj_type == "sheet":
+        logger.info("  文档类型: 电子表格")
         matrix = client.read_spreadsheet_values(obj_token)
         tables = [matrix]
-        table_index = 0  # 对于纯电子表格，直接取第1页的矩阵作为 table
+        table_index = 0
     else:
-        # 降级处理为普通文档 docx 中的内嵌表格
+        logger.info("  文档类型: %s (内嵌表格)", obj_type)
         tables = client.read_doc_tables(obj_token)
 
     if not tables:
@@ -240,11 +267,13 @@ def load_portfolio_from_feishu(
     if table_index >= len(tables):
         raise RuntimeError(f"文档中只有 {len(tables)} 个表格，请求第 {table_index} 个")
 
+    logger.info("  找到 %d 个表格，解析第 %d 个 (%d行 x %d列)",
+                len(tables), table_index,
+                len(tables[table_index]),
+                len(tables[table_index][0]) if tables[table_index] else 0)
     portfolio = parse_table_to_portfolio(tables[table_index])
-    logger.info(
-        "飞书持仓加载成功: %d 只股票, 现金 %.2f",
-        len(portfolio.positions), portfolio.cash,
-    )
+    logger.info("飞书持仓加载完成: %d 只股票, 现金 %.2f",
+                len(portfolio.positions), portfolio.cash)
 
     save_portfolio_local(portfolio)
     return portfolio
@@ -286,8 +315,12 @@ def load_portfolio(doc_id: str | None = None) -> Portfolio:
     try:
         return load_portfolio_from_feishu(doc_id)
     except Exception as e:
-        logger.warning("飞书持仓读取失败 (%s)，使用本地缓存", e)
-        return load_portfolio_local()
+        logger.warning("飞书持仓读取失败: %s", e)
+        logger.info("  → 降级: 使用本地缓存 %s", CACHE_FILE)
+        p = load_portfolio_local()
+        if p.updated_at:
+            logger.info("  本地缓存数据时间: %s", p.updated_at[:19])
+        return p
 
 
 # ──────────────────────────────────────────────────
@@ -403,6 +436,10 @@ def compute_rebalance(
     """
     slip = slippage_pct / 100.0
     total_mkt_value = portfolio.total_market_value(prices)
+    logger.debug("compute_rebalance: total_mkt=%.2f, cash=%.2f, "
+                 "positions=%d, signals=%d, top_k=%d",
+                 total_mkt_value, portfolio.cash,
+                 len(portfolio.positions), len(signals), top_k)
 
     skipped_cooldowns: list[dict] = []
     top_k_symbols: list[str] = []
