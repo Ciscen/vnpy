@@ -596,6 +596,26 @@ def main() -> None:
         logger.error("❌ 未能生成有效信号，退出")
         sys.exit(1)
 
+    # 过滤到当前 HS300 成分股（训练宇宙是 CSI800，选股限定 HS300）
+    total_signal_count = signal_df.height
+    try:
+        import akshare as ak
+        hs300_df = ak.index_stock_cons(symbol="000300")
+        hs300_codes = set(hs300_df["品种代码"])
+        hs300_vt = set()
+        for code in hs300_codes:
+            if code.startswith(("6", "5")):
+                hs300_vt.add(f"{code}.SSE")
+            elif code.startswith(("0", "3")):
+                hs300_vt.add(f"{code}.SZSE")
+        signal_df = signal_df.filter(
+            pl.col("vt_symbol").is_in(hs300_vt)
+        ).sort("signal", descending=True)
+        logger.info("  HS300 过滤: %d → %d 只 (HS300 成分 %d 只)",
+                    total_signal_count, signal_df.height, len(hs300_vt))
+    except Exception as e:
+        issues.warn(f"HS300 成分股过滤失败 ({e})，使用全部信号")
+
     signals = signal_df.to_dicts()
     logger.info("Phase 2 完成: %d 只股票信号 (%.1fs)",
                 len(signals), time.monotonic() - t2)

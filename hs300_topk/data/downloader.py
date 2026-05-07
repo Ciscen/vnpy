@@ -1,7 +1,7 @@
 """
 hs300_topk/data/downloader.py
 
-沪深 300 成分股日线数据下载模块（增量更新 + 基准指数）。
+CSI800 (HS300+CSI500) 日线数据下载模块（增量更新 + 基准指数）。
 
 可独立使用::
 
@@ -223,7 +223,10 @@ def phase_download(
     data_start: str = PIPELINE.data_start,
     data_end: str = PIPELINE.data_end,
 ) -> list[str]:
-    """下载沪深 300 成分股日线数据到 AlphaLab（增量更新）。
+    """下载 CSI800 (HS300+CSI500) 成分股日线数据到 AlphaLab（增量更新）。
+
+    使用 CSI800 作为选股宇宙以减少幸存者偏差：训练时包含更广的股票池，
+    预测时仍可限定在 HS300 内选股。
 
     Returns
     -------
@@ -243,10 +246,18 @@ def phase_download(
     daily_path = Path(lab_path) / "daily"
     target_end = datetime.strptime(ak_end, "%Y%m%d")
 
-    print("获取沪深 300 成分股列表 ...", flush=True)
-    cons_df = ak.index_stock_cons(symbol="000300")
-    symbols = list(cons_df["品种代码"])
-    print(f"  成分股数量: {len(symbols)}", flush=True)
+    print("获取 CSI800 选股宇宙 (HS300 + CSI500) ...", flush=True)
+    hs300_df = ak.index_stock_cons(symbol="000300")
+    hs300_codes = set(hs300_df["品种代码"])
+    try:
+        csi500_df = ak.index_stock_cons(symbol="000905")
+        csi500_codes = set(csi500_df["品种代码"])
+    except Exception as e:
+        print(f"  ⚠ CSI500 获取失败 ({e})，仅使用 HS300", flush=True)
+        csi500_codes = set()
+    symbols = sorted(hs300_codes | csi500_codes)
+    print(f"  选股宇宙: HS300({len(hs300_codes)}) + CSI500({len(csi500_codes)})"
+          f" = {len(symbols)} 只（去重）", flush=True)
 
     total = len(symbols)
     success = 0
