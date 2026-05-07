@@ -178,7 +178,7 @@ def download_benchmark(
 # ──────────────────────────────────────────────────
 
 def ensure_component_index(lab: AlphaLab, vt_symbols: list[str]) -> None:
-    """确保 shelve 成分股索引覆盖整个数据区间。"""
+    """确保 shelve 成分股索引覆盖整个数据区间且股票数量一致。"""
     index_symbol = "HS300.SSE"
     db_path = str(lab.component_path.joinpath(index_symbol))
 
@@ -195,6 +195,12 @@ def ensure_component_index(lab: AlphaLab, vt_symbols: list[str]) -> None:
                 if max_key < target_end_str:
                     print(f"  成分股索引仅覆盖到 {max_key}，需要扩展", flush=True)
                     needs_rebuild = True
+                else:
+                    existing_count = len(db[max_key])
+                    if existing_count != len(vt_symbols):
+                        print(f"  成分股数量变化: {existing_count} → {len(vt_symbols)}，需要重建",
+                              flush=True)
+                        needs_rebuild = True
     except Exception:
         needs_rebuild = True
 

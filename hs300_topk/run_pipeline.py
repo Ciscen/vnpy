@@ -257,6 +257,8 @@ def main() -> None:
                         help="策略配置版本 (默认 v1.3，compare=同时运行所有版本)")
     parser.add_argument("--config-file", type=str, default=None,
                         help="自定义配置文件路径 (JSON)")
+    parser.add_argument("--filter-hs300", action="store_true",
+                        help="回测时信号只保留当前 HS300 成分股（模拟生产选股限制）")
     args = parser.parse_args()
 
     config_map = {
@@ -302,6 +304,20 @@ def main() -> None:
     # Phase 2: 训练
     use_daily = config.daily_signal if config else False
     signal_df = phase_train_or_load(skip_train=args.backtest_only, daily=use_daily)
+
+    # 可选: 过滤到 HS300 成分股
+    if args.filter_hs300:
+        import akshare as ak
+        from hs300_topk.data.downloader import symbol_to_exchange
+        hs300_df = ak.index_stock_cons(symbol="000300")
+        hs300_vt = {
+            f"{code}.{symbol_to_exchange(code).value}"
+            for code in hs300_df["品种代码"]
+        }
+        before = signal_df["vt_symbol"].n_unique()
+        signal_df = signal_df.filter(pl.col("vt_symbol").is_in(hs300_vt))
+        after = signal_df["vt_symbol"].n_unique()
+        print(f"\n  [HS300 过滤] 信号股票: {before} → {after} 只")
 
     # Phase 3: 回测 + 报告
     dashboard_path: Path | None = None
