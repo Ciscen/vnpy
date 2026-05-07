@@ -1,0 +1,121 @@
+{
+  "run_id": "0d6d84629908",
+  "generated_at": "2026-05-07T19:58:11.070537",
+  "date": "2026-05-07",
+  "strategy": "v1.4",
+  "portfolio_before": {
+    "cash": 12000.0,
+    "position_value": 67057.0,
+    "total_market_value": 79057.0,
+    "position_count": 2,
+    "updated_at": "2026-05-07T19:58:09.747896",
+    "stale_hours": 0.0
+  },
+  "portfolio_after": {
+    "expected_cash": 53383.73,
+    "expected_positions": 2,
+    "expected_total": 78991.73
+  },
+  "actions": [
+    {
+      "symbol": "600346.SSE",
+      "name": "600346",
+      "action": "BUY",
+      "shares": 600,
+      "ref_price": 22.85,
+      "price_low": 22.51,
+      "price_high": 23.19,
+      "estimated_amount": 13710.0,
+      "current_pnl_pct": 0.0,
+      "reason": "new_entry",
+      "reason_text": "信号排名 #1（0.85），新进入 Top-5，建议买入",
+      "signal_prob": 0.8547597527503967,
+      "signal_rank": 1,
+      "fee": 5.14,
+      "net_amount": 13715.14,
+      "market_value": 13710.0,
+      "weight_pct": 17.3,
+      "hold_days": 0,
+      "estimated_cost": 13710.0
+    },
+    {
+      "symbol": "600482.SSE",
+      "name": "600482",
+      "action": "BUY",
+      "shares": 300,
+      "ref_price": 39.66,
+      "price_low": 39.07,
+      "price_high": 40.25,
+      "estimated_amount": 11898.0,
+      "current_pnl_pct": 0.0,
+      "reason": "new_entry",
+      "reason_text": "信号排名 #5（0.54），新进入 Top-5，建议买入",
+      "signal_prob": 0.5363360047340393,
+      "signal_rank": 5,
+      "fee": 5.12,
+      "net_amount": 11903.12,
+      "market_value": 11898.0,
+      "weight_pct": 15.0,
+      "hold_days": 0,
+      "estimated_cost": 11898.0
+    },
+    {
+      "symbol": "300394.SZSE",
+      "name": "天孚通信",
+      "action": "SELL",
+      "shares": 200,
+      "ref_price": 316.16,
+      "price_low": 311.42,
+      "price_high": 320.9,
+      "estimated_amount": 63232.0,
+      "current_pnl_pct": 1149.64,
+      "reason": "rebalance_out",
+      "reason_text": "信号排名 #9（0.52），滑出 Top-5，建议卖出",
+      "signal_prob": 0.5210166573524475,
+      "signal_rank": 9,
+      "fee": 48.06,
+      "net_amount": 63183.94,
+      "market_value": 63232.0,
+      "weight_pct": 80.0,
+      "hold_days": 0,
+      "estimated_proceeds": 63232.0
+    },
+    {
+      "symbol": "000063.SZSE",
+      "name": "中兴通讯",
+      "action": "SELL",
+      "shares": 100,
+      "ref_price": 38.25,
+      "price_low": 37.68,
+      "price_high": 38.82,
+      "estimated_amount": 3825.0,
+      "current_pnl_pct": -97.93,
+      "reason": "rebalance_out",
+      "reason_text": "信号排名 #67（0.33），不在 Top-5 内，建议卖出",
+      "signal_prob": 0.33137354254722595,
+      "signal_rank": 67,
+      "fee": 6.95,
+      "net_amount": 3818.05,
+      "market_value": 3825.0,
+      "weight_pct": 4.8,
+      "hold_days": 0,
+      "estimated_proceeds": 3825.0
+    }
+  ],
+  "skipped_cooldowns": [],
+  "summary": {
+    "buys": 2,
+    "sells": 2,
+    "holds": 0,
+    "estimated_turnover": 92665.0,
+    "total_fees": 65.27
+  },
+  "model_info": {
+    "train_cutoff": "cached",
+    "signal_date": "2026-05-07",
+    "signal_count": 279
+  },
+  "issues": [
+    "⚠️ 今日信号文件已存在 (run_id=e639f6eab74d, 生成于 2026-05-07T19:39:58.429638)，本次执行将覆盖"
+  ]
+}

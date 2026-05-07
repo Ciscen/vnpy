@@ -1,0 +1,22 @@
+- [/] 创建根目录 `hs300_topk/` 并添加 `README.md` 与 `requirements.txt`（包括 pandas, scikit-learn, xgboost, akshare, vnpy 等）
+- [/] **数据层**
+  - [/ ] 编写 `hs300_topk/data/download_data.py`（已完成）
+  - [/ ] 编写 `hs300_topk/data/loader.py`（已完成）
+- [/] **特征工程**
+  - [/ ] `hs300_topk/features/engineer.py`（已完成）
+  - [/ ] `hs300_topk/features/labeler.py`（已完成）
+- [ ] **模型层**
+  - [ ] `hs300_topk/model/trainer.py`
+  - [ ] `hs300_topk/model/rolling_trainer.py`
+  - [ ] `hs300_topk/model/predictor.py`
+- [ ] **策略实现**
+  - [ ] `hs300_topk/strategy/hs300_topk_strategy.py`
+- [ ] **回测入口**
+  - [ ] `hs300_topk/backtest/run_backtest.py`
+  - [ ] `hs300_topk/backtest/evaluation.py`
+- [ ] **测试**
+  - [ ] 为每个模块编写单元测试
+- [ ] **文档**
+  - [ ] 在 `hs300_topk/README.md` 中说明项目结构、依赖安装、数据下载、运行步骤
+
+*已完成的核心文件：download_data.py、loader.py、engineer.py、labeler.py。接下来将进入模型层实现。*

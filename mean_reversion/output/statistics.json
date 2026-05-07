@@ -1,0 +1,23 @@
+{
+    "best_params": {
+        "ma_period": 20,
+        "buy_threshold": -0.03,
+        "sell_threshold": 0.03
+    },
+    "full_sample": {
+        "total_return": 0.3959792156500024,
+        "annual_return": 0.035259576050906904,
+        "max_drawdown": 0.10019482791199778,
+        "sharpe_ratio": 0.5397012285183874,
+        "win_rate": 0.6,
+        "trades": 15
+    },
+    "test_sample": {
+        "total_return": -0.046696999200000144,
+        "annual_return": -0.02449192617871032,
+        "max_drawdown": 0.0791401281,
+        "sharpe_ratio": -0.40022205163910357,
+        "win_rate": 0.0,
+        "trades": 2
+    }
+}
