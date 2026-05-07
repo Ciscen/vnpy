@@ -177,29 +177,75 @@ def download_benchmark(
 # 成分股索引
 # ──────────────────────────────────────────────────
 
+def _bs_code_to_vt(bs_code: str) -> str:
+    """将 BaoStock 代码 (sh.600000) 转为 vt_symbol (600000.SSE)。"""
+    prefix, num = bs_code.split(".")
+    exchange = "SSE" if prefix == "sh" else "SZSE"
+    return f"{num}.{exchange}"
+
+
+def _fetch_hs300_snapshots(
+    start_year: int = 2016,
+    end_year: int = 2026,
+) -> dict[str, list[str]]:
+    """通过 BaoStock 获取每半年的 HS300 成分股快照。
+
+    Returns
+    -------
+    dict[date_str, list[vt_symbol]]
+        每个调整节点对应的成分股列表。
+    """
+    import baostock as bs
+
+    lg = bs.login()
+    if lg.error_code != "0":
+        raise RuntimeError(f"BaoStock login failed: {lg.error_msg}")
+
+    snapshots: dict[str, list[str]] = {}
+    query_dates = []
+    for y in range(start_year, end_year + 1):
+        query_dates.append(f"{y}-01-15")
+        query_dates.append(f"{y}-07-15")
+
+    for d in query_dates:
+        rs = bs.query_hs300_stocks(date=d)
+        codes: list[str] = []
+        while rs.error_code == "0" and rs.next():
+            row = rs.get_row_data()
+            codes.append(_bs_code_to_vt(row[1]))
+        if codes:
+            snapshots[d] = sorted(codes)
+
+    bs.logout()
+    return snapshots
+
+
 def ensure_component_index(lab: AlphaLab, vt_symbols: list[str]) -> None:
-    """确保 shelve 成分股索引覆盖整个数据区间且股票数量一致。"""
+    """使用 BaoStock 历史数据构建逐日成分股索引，消除幸存者偏差。
+
+    首先尝试获取 BaoStock 历史数据，失败时降级为静态列表。
+    """
     index_symbol = "HS300.SSE"
     db_path = str(lab.component_path.joinpath(index_symbol))
+    marker_file = lab.component_path.joinpath(f"{index_symbol}.pit_version")
 
+    PIT_VERSION = "baostock_v1"
     target_end_str = "2026-12-31"
     needs_rebuild = False
 
     try:
-        with shelve.open(db_path) as db:
-            keys = list(db.keys())
-            if not keys:
-                needs_rebuild = True
-            else:
-                max_key = max(keys)
-                if max_key < target_end_str:
-                    print(f"  成分股索引仅覆盖到 {max_key}，需要扩展", flush=True)
+        current_ver = marker_file.read_text().strip() if marker_file.exists() else ""
+        if current_ver != PIT_VERSION:
+            print("  成分股索引需升级为 point-in-time 版本", flush=True)
+            needs_rebuild = True
+        else:
+            with shelve.open(db_path) as db:
+                keys = list(db.keys())
+                if not keys:
                     needs_rebuild = True
                 else:
-                    existing_count = len(db[max_key])
-                    if existing_count != len(vt_symbols):
-                        print(f"  成分股数量变化: {existing_count} → {len(vt_symbols)}，需要重建",
-                              flush=True)
+                    max_key = max(keys)
+                    if max_key < target_end_str:
                         needs_rebuild = True
     except Exception:
         needs_rebuild = True
@@ -207,15 +253,47 @@ def ensure_component_index(lab: AlphaLab, vt_symbols: list[str]) -> None:
     if not needs_rebuild:
         return
 
-    print("  写入成分股索引 ...", flush=True)
+    print("  获取 BaoStock 历史成分股快照 ...", flush=True)
+    try:
+        snapshots = _fetch_hs300_snapshots()
+    except Exception as e:
+        print(f"  ⚠ BaoStock 获取失败 ({e})，降级为静态成分股列表", flush=True)
+        start_dt = datetime(2016, 1, 1)
+        end_dt = datetime(2026, 12, 31)
+        with shelve.open(db_path, flag="n") as db:
+            cur = start_dt
+            while cur <= end_dt:
+                db[cur.strftime("%Y-%m-%d")] = vt_symbols
+                cur += timedelta(days=1)
+        print(f"  成分股索引 (静态): {index_symbol} -> {len(vt_symbols)} 只", flush=True)
+        return
+
+    # 按时间排序快照节点
+    sorted_dates = sorted(snapshots.keys())
+    print(f"  获取到 {len(sorted_dates)} 个调整节点", flush=True)
+
+    # 逐日写入：每天使用最近一次快照的成分股
+    print("  写入逐日成分股索引 ...", flush=True)
     start_dt = datetime(2016, 1, 1)
     end_dt = datetime(2026, 12, 31)
+
     with shelve.open(db_path, flag="n") as db:
+        snap_idx = 0
         cur = start_dt
         while cur <= end_dt:
-            db[cur.strftime("%Y-%m-%d")] = vt_symbols
+            cur_str = cur.strftime("%Y-%m-%d")
+            while (snap_idx + 1 < len(sorted_dates)
+                   and sorted_dates[snap_idx + 1] <= cur_str):
+                snap_idx += 1
+            db[cur_str] = snapshots[sorted_dates[snap_idx]]
             cur += timedelta(days=1)
-    print(f"  成分股索引: {index_symbol} -> {len(vt_symbols)} 只, "
+    marker_file.write_text(PIT_VERSION)
+
+    all_ever = set()
+    for codes in snapshots.values():
+        all_ever.update(codes)
+    print(f"  成分股索引 (point-in-time): {len(sorted_dates)} 个快照, "
+          f"累计 {len(all_ever)} 只不同股票, "
           f"覆盖 {start_dt.date()} ~ {end_dt.date()}", flush=True)
 
 

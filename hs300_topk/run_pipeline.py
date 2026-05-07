@@ -305,7 +305,7 @@ def main() -> None:
     use_daily = config.daily_signal if config else False
     signal_df = phase_train_or_load(skip_train=args.backtest_only, daily=use_daily)
 
-    # 可选: 过滤到 HS300 成分股
+    # 可选: 过滤到当前 HS300 成分股（用于对比测试）
     if args.filter_hs300:
         import akshare as ak
         from hs300_topk.data.downloader import symbol_to_exchange
