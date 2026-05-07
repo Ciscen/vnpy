@@ -61,6 +61,19 @@ LOG_DIR = STRATEGY_ROOT / "live" / "logs"
 
 _rerun_lock = threading.Lock()
 
+PRIVILEGED_COMMANDS = {"/reset", "/rerun", "/retrain"}
+
+def _load_allowed_users() -> set[str]:
+    """从环境变量加载允许执行特权命令的用户 open_id 列表。
+
+    FEISHU_ALLOWED_USERS 格式: 逗号分隔的 open_id，如 "ou_xxx,ou_yyy"
+    为空或未设置时不做鉴权限制。
+    """
+    raw = os.environ.get("FEISHU_ALLOWED_USERS", "").strip()
+    if not raw:
+        return set()
+    return {uid.strip() for uid in raw.split(",") if uid.strip()}
+
 
 # ══════════════════════════════════════════════════
 # 飞书 SDK 客户端
@@ -216,6 +229,15 @@ def cmd_help(chat_id: str, _args: str) -> None:
         [
             {"tag": "text", "text": "/health"},
             {"tag": "text", "text": "  系统健康检查（数据/模型/飞书）\n"},
+        ],
+        [{"tag": "text", "text": "\n🛠 管理类\n"}],
+        [
+            {"tag": "text", "text": "/reset"},
+            {"tag": "text", "text": "  清理信号+缓存（生产初始化）\n"},
+        ],
+        [
+            {"tag": "text", "text": "/reset all"},
+            {"tag": "text", "text": "  清理信号+缓存+日志\n"},
         ],
         [{"tag": "text", "text": "\n❓ 其他\n"}],
         [
@@ -531,6 +553,52 @@ def cmd_health(chat_id: str, _args: str) -> None:
     _send_to_chat(chat_id, "\n".join(lines))
 
 
+def cmd_reset(chat_id: str, args: str) -> None:
+    """清理生产数据，用于初始化或重置环境。
+
+    /reset        清理信号文件 + 持仓缓存
+    /reset all    额外清理日志文件
+    """
+    include_logs = args.strip().lower() == "all"
+    lines = ["🧹 开始清理生产数据\n"]
+    state_dir = STRATEGY_ROOT / "live" / "state"
+
+    # 1. 清理信号文件
+    signal_files = list(SIGNAL_DIR.glob("*.json"))
+    if signal_files:
+        for f in signal_files:
+            f.unlink()
+        lines.append(f"✅ 信号文件: 已删除 {len(signal_files)} 个")
+    else:
+        lines.append("⏭ 信号文件: 无需清理（已为空）")
+
+    # 2. 清理持仓缓存
+    cache_file = state_dir / "portfolio_cache.json"
+    if cache_file.exists():
+        cache_file.unlink()
+        lines.append("✅ 持仓缓存: 已删除 portfolio_cache.json")
+    else:
+        lines.append("⏭ 持仓缓存: 无需清理（不存在）")
+
+    # 3. 可选：清理日志
+    if include_logs:
+        log_files = list(LOG_DIR.glob("live_*.log"))
+        if log_files:
+            for f in log_files:
+                f.unlink()
+            lines.append(f"✅ 日志文件: 已删除 {len(log_files)} 个")
+        else:
+            lines.append("⏭ 日志文件: 无需清理（已为空）")
+    else:
+        log_count = len(list(LOG_DIR.glob("live_*.log")))
+        if log_count:
+            lines.append(f"⏭ 日志文件: 保留 {log_count} 个（/reset all 可清理）")
+
+    lines.append("\n✅ 清理完成，环境已重置")
+    lines.append("💡 建议接下来执行 /rerun 生成新的信号基准")
+    _send_to_chat(chat_id, "\n".join(lines))
+
+
 COMMANDS: dict[str, callable] = {
     "/help": cmd_help,
     "/rerun": cmd_rerun,
@@ -541,6 +609,7 @@ COMMANDS: dict[str, callable] = {
     "/log": cmd_log,
     "/signal": cmd_signal,
     "/health": cmd_health,
+    "/reset": cmd_reset,
 }
 
 
@@ -556,7 +625,9 @@ def handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         chat_id = msg.chat_id
         msg_type = msg.message_type
 
-        # 只处理文本消息
+        sender = data.event.sender
+        sender_id = sender.sender_id.open_id if sender and sender.sender_id else ""
+
         if msg_type != "text":
             return
 
@@ -565,28 +636,37 @@ def handle_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         if not text:
             return
 
-        logger.info("收到消息: chat=%s text=%s", chat_id[:12], text[:50])
+        logger.info("收到消息: chat=%s sender=%s text=%s",
+                     chat_id[:12], sender_id or "?", text[:50])
 
-        # 第一时间表情回复确认已读
         _add_reaction(message_id, "EYES")
 
-        # 解析命令
         parts = text.split(maxsplit=1)
         cmd = parts[0].lower()
         args = parts[1] if len(parts) > 1 else ""
 
         handler = COMMANDS.get(cmd)
-        if handler:
-            # 耗时命令在新线程执行，避免阻塞 WebSocket
-            if cmd in ("/rerun", "/retrain"):
-                threading.Thread(
-                    target=handler, args=(chat_id, args),
-                    daemon=True,
-                ).start()
-            else:
-                handler(chat_id, args)
-        else:
+        if not handler:
             _send_to_chat(chat_id, f"未知命令: {cmd}\n输入 /help 查看可用命令")
+            return
+
+        # 特权命令鉴权
+        if cmd in PRIVILEGED_COMMANDS:
+            allowed = _load_allowed_users()
+            if allowed and sender_id not in allowed:
+                logger.warning("用户 %s 尝试执行特权命令 %s，已拒绝",
+                               sender_id, cmd)
+                _send_to_chat(chat_id,
+                              f"🔒 权限不足: {cmd} 仅限授权用户执行")
+                return
+
+        if cmd in ("/rerun", "/retrain"):
+            threading.Thread(
+                target=handler, args=(chat_id, args),
+                daemon=True,
+            ).start()
+        else:
+            handler(chat_id, args)
 
     except Exception as e:
         logger.error("处理消息异常: %s", e, exc_info=True)

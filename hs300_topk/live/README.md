@@ -158,19 +158,19 @@ crontab -e
 
 ```cron
 # ─── HS300 Top-K 周度调仓 ───────────────────────────────
-# 每个工作日 8:30 执行（非周一/非交易日 → 自动跳过）
+# 每个工作日 9:00 执行（非周一/非交易日 → 自动跳过）
 # 日志按日期自动拆分到 live_YYYY-MM-DD.log
-30 8 * * 1-5 cd /opt/vnpy && source .env && .venv/bin/python -m hs300_topk.run_live 2>&1
+0 9 * * 1-5 cd /opt/vnpy && source .env && .venv/bin/python -m hs300_topk.run_live 2>&1
 
-# 每月 1 号 7:00 强制重训模型
-0 7 1 * * cd /opt/vnpy && source .env && .venv/bin/python -m hs300_topk.run_live --retrain 2>&1
+# 每月 1 号 8:00 强制重训模型（比日常任务早 1 小时）
+0 8 1 * * cd /opt/vnpy && source .env && .venv/bin/python -m hs300_topk.run_live --retrain 2>&1
 ```
 
 **关于 cron 调度说明**：
-- 设为每个工作日 8:30 而非只周一，是为了容错：如果周一执行失败，周二会自动重试
+- 设为每个工作日 9:00 而非只周一，是为了容错：如果周一执行失败，周二会自动重试
 - 非周一时脚本内部判断 `today.weekday() != 0` → 自动跳过，不会重复调仓
 - 日志按日期自动写入 `hs300_topk/live/logs/live_YYYY-MM-DD.log`，无需手动轮换
-- 月度重训 cron 加在 1 号 7:00，比日常任务早 1.5 小时，确保模型训练完成后再执行调仓
+- 月度重训 cron 加在 1 号 8:00，比日常任务早 1 小时，确保模型训练完成后再执行调仓
 - 重训日期如果不是交易日或周一，信号会被缓存等到下个周一使用
 
 ## Step 8: 日志管理
