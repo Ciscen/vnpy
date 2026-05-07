@@ -22,7 +22,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 
 # 1.3 安装依赖
-pip install -r requirements.txt
+pip install -r hs300_top10/requirements.txt
 ```
 
 ## Step 2: 首次数据初始化
