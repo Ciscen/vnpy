@@ -105,7 +105,9 @@ def build_signal_json(
     signal_date: date,
     actions: list,
     portfolio,
+    prices: dict[str, float],
     model_info: dict,
+    skipped_cooldowns: list[dict] | None = None,
 ) -> dict:
     """构建完整的交易建议 JSON。"""
     action_dicts = []
@@ -121,24 +123,52 @@ def build_signal_json(
     sells = [a for a in actions if a.action == "SELL"]
     holds = [a for a in actions if a.action == "HOLD"]
     turnover = sum(a.estimated_amount for a in buys) + sum(a.estimated_amount for a in sells)
+    total_fees = sum(a.fee for a in actions)
+    total_mkt = portfolio.total_market_value(prices)
+    pos_value = total_mkt - portfolio.cash
+
+    sell_net = sum(a.net_amount for a in sells)
+    buy_net = sum(a.net_amount for a in buys)
 
     return {
         "date": signal_date.isoformat(),
         "strategy": CONFIG.version,
         "portfolio_before": {
             "cash": portfolio.cash,
-            "total_value": round(portfolio.total_value, 2),
+            "position_value": round(pos_value, 2),
+            "total_market_value": round(total_mkt, 2),
             "position_count": len(portfolio.positions),
+            "updated_at": portfolio.updated_at,
+            "stale_hours": _calc_stale_hours(portfolio.updated_at),
+        },
+        "portfolio_after": {
+            "expected_cash": round(portfolio.cash + sell_net - buy_net, 2),
+            "expected_positions": len(holds) + len(buys),
+            "expected_total": round(total_mkt - total_fees, 2),
         },
         "actions": action_dicts,
+        "skipped_cooldowns": skipped_cooldowns or [],
         "summary": {
             "buys": len(buys),
             "sells": len(sells),
             "holds": len(holds),
             "estimated_turnover": round(turnover, 2),
+            "total_fees": round(total_fees, 2),
         },
         "model_info": model_info,
     }
+
+
+def _calc_stale_hours(updated_at: str) -> float:
+    """计算持仓数据的陈旧小时数。"""
+    if not updated_at:
+        return 999
+    try:
+        updated = datetime.fromisoformat(updated_at)
+        delta = datetime.now() - updated
+        return delta.total_seconds() / 3600
+    except (ValueError, TypeError):
+        return 999
 
 
 # ══════════════════════════════════════════════════
@@ -152,6 +182,7 @@ def notify_feishu(signal_json: dict) -> None:
         logger.warning("FEISHU_CHAT_ID 未设置，跳过飞书推送")
         return
 
+    client = None
     try:
         from hs300_top10.live.feishu import FeishuClient, build_rebalance_card
 
@@ -161,20 +192,24 @@ def notify_feishu(signal_json: dict) -> None:
             actions=signal_json["actions"],
             summary=signal_json["summary"],
             model_info=signal_json["model_info"],
+            portfolio_before=signal_json.get("portfolio_before"),
+            portfolio_after=signal_json.get("portfolio_after"),
+            skipped_cooldowns=signal_json.get("skipped_cooldowns"),
         )
         client.send_card_message(chat_id, card)
         logger.info("飞书卡片消息推送成功")
     except Exception as e:
         logger.error("飞书推送失败: %s", e)
-        try:
-            client.send_text_message(
-                chat_id,
-                f"[HS300 V1.3] {signal_json['date']} 调仓建议已生成，"
-                f"买{signal_json['summary']['buys']}卖{signal_json['summary']['sells']}"
-                f"持{signal_json['summary']['holds']}，详见本地日志。",
-            )
-        except Exception:
-            pass
+        if client:
+            try:
+                client.send_text_message(
+                    chat_id,
+                    f"[HS300 V1.3] {signal_json['date']} 调仓建议已生成，"
+                    f"买{signal_json['summary']['buys']}卖{signal_json['summary']['sells']}"
+                    f"持{signal_json['summary']['holds']}，详见本地日志。",
+                )
+            except Exception:
+                pass
 
 
 # ══════════════════════════════════════════════════
@@ -297,7 +332,7 @@ def main() -> None:
 
     # ── Phase 5: 计算调仓差异 ──
     logger.info("Phase 5: 计算调仓差异 ...")
-    actions = compute_rebalance(
+    actions, skipped_cooldowns = compute_rebalance(
         portfolio=portfolio,
         signals=signals,
         prices=prices,
@@ -312,9 +347,14 @@ def main() -> None:
 
     for a in actions:
         pnl_str = f" ({'+' if a.current_pnl_pct >= 0 else ''}{a.current_pnl_pct:.1f}%)" if a.action != "BUY" else ""
-        logger.info("    %s %-6s %s %d股 @%.2f%s [信号:%.3f #%d]",
+        logger.info("    %s %-6s %s %d股 @%.2f (%.2f~%.2f)%s [信号:%.3f #%d 市值:%.0f 占比:%.1f%%]",
                      a.action, a.symbol[:6], a.name, a.shares,
-                     a.ref_price, pnl_str, a.signal_prob, a.signal_rank)
+                     a.ref_price, a.price_low, a.price_high,
+                     pnl_str, a.signal_prob, a.signal_rank,
+                     a.market_value, a.weight_pct)
+
+    if skipped_cooldowns:
+        logger.info("  冷却中跳过: %s", [(s["vt_symbol"], f'{s["signal"]:.3f}', f'{s["remaining_days"]}天') for s in skipped_cooldowns])
 
     # ── Phase 6: 输出交易建议 ──
     model_info = {
@@ -322,7 +362,9 @@ def main() -> None:
         "signal_date": today.isoformat(),
         "signal_count": len(signals),
     }
-    signal_json = build_signal_json(today, actions, portfolio, model_info)
+    signal_json = build_signal_json(
+        today, actions, portfolio, prices, model_info, skipped_cooldowns,
+    )
 
     SIGNAL_DIR.mkdir(parents=True, exist_ok=True)
     signal_path = SIGNAL_DIR / f"{today.isoformat()}.json"
