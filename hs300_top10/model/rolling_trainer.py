@@ -345,6 +345,141 @@ def rolling_train_daily(
     return signal_df, vt_symbols
 
 
+def predict_live(
+    target_date: date,
+    lab_path: str = DEFAULT_LAB_PATH,
+    data_start: str = DATA_START,
+    train_years: int = TRAIN_YEARS,
+    max_workers: int = 4,
+) -> pl.DataFrame:
+    """为单个目标日期（周一）生成所有股票的信号概率。
+
+    流程：
+    1. 加载日线 → Alpha158 特征（data_start ~ target_date）
+    2. 生成周度标签
+    3. 用 target_date 之前的历史数据训练一次 XGBoost
+    4. 对 target_date 当天所有股票做预测
+
+    Parameters
+    ----------
+    target_date : date
+        预测目标日（应为周一）。
+    lab_path : str
+        AlphaLab 数据路径。
+    data_start : str
+        历史数据起始日期。
+    train_years : int
+        训练窗口年限。
+    max_workers : int
+        特征计算并行度。
+
+    Returns
+    -------
+    pl.DataFrame
+        列: vt_symbol, signal — 每只股票的信号概率
+    """
+    data_end = target_date.isoformat()
+
+    print("=" * 60)
+    print(f"  HS300 Top-10 实时信号生成 ({target_date})")
+    print("=" * 60)
+
+    bar_df, raw_features, vt_symbols = _load_features(
+        lab_path, data_start, data_end, data_end, max_workers,
+    )
+
+    print("\n[Step 3] 生成周度标签 ...")
+    labels_df = generate_weekly_labels(bar_df)
+
+    monday_features = raw_features.with_columns(
+        pl.col("datetime").dt.weekday().alias("_weekday")
+    ).filter(pl.col("_weekday") == 1).drop("_weekday")
+
+    monday_with_labels = monday_features.drop("label").join(
+        labels_df, on=["datetime", "vt_symbol"], how="left"
+    )
+
+    feature_cols = [
+        c for c in monday_with_labels.columns
+        if c not in ("datetime", "vt_symbol", "label")
+    ]
+
+    label_gap_days = 7
+    train_cutoff = (target_date - timedelta(days=1 + label_gap_days)).isoformat()
+    train_start_limit = (target_date - timedelta(days=1 + train_years * 365)).isoformat()
+
+    train_pool = monday_with_labels.filter(
+        (pl.col("datetime") >= pl.lit(datetime.fromisoformat(train_start_limit)))
+        & (pl.col("datetime") <= pl.lit(datetime.fromisoformat(train_cutoff)))
+    ).drop_nulls(subset=["label"])
+
+    print(f"\n[Step 4] 训练 XGBoost (样本: {train_pool.height}) ...")
+    if train_pool.height < 100:
+        raise RuntimeError(f"训练样本不足: {train_pool.height} < 100")
+
+    n_train = train_pool.height
+    split_idx = int(n_train * 0.8)
+    train_sorted = train_pool.sort("datetime")
+    train_data = train_sorted.slice(0, split_idx)
+    valid_data = train_sorted.slice(split_idx, n_train - split_idx)
+
+    def _to_xy(df: pl.DataFrame):
+        X = df.select(feature_cols).to_numpy()
+        y = np.array(df["label"])
+        mask = ~np.isnan(y)
+        return X[mask], y[mask]
+
+    X_train, y_train = _to_xy(train_data)
+    X_valid, y_valid = _to_xy(valid_data)
+
+    clf = xgb.XGBClassifier(
+        n_estimators=500,
+        max_depth=6,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        eval_metric="logloss",
+        random_state=42,
+        use_label_encoder=False,
+        early_stopping_rounds=30,
+        verbosity=0,
+    )
+    clf.fit(X_train, y_train, eval_set=[(X_valid, y_valid)], verbose=False)
+    print(f"  训练: {X_train.shape[0]}, 验证: {X_valid.shape[0]}, "
+          f"best_iter: {clf.best_iteration}")
+
+    target_dt = datetime(target_date.year, target_date.month, target_date.day)
+    predict_pool = monday_with_labels.filter(
+        pl.col("datetime") == pl.lit(target_dt)
+    )
+
+    if predict_pool.is_empty():
+        nearby = monday_with_labels.filter(
+            pl.col("datetime") >= pl.lit(target_dt - timedelta(days=3))
+        ).filter(
+            pl.col("datetime") <= pl.lit(target_dt + timedelta(days=3))
+        )
+        if not nearby.is_empty():
+            actual_date = nearby["datetime"].max()
+            predict_pool = monday_with_labels.filter(
+                pl.col("datetime") == pl.lit(actual_date)
+            )
+            print(f"  [注意] 目标日期 {target_date} 无数据，使用最近日期 {actual_date.date()}")
+        else:
+            raise RuntimeError(f"目标日期 {target_date} 附近无可用数据")
+
+    X_pred = predict_pool.select(feature_cols).to_numpy()
+    probas = clf.predict_proba(X_pred)[:, 1]
+
+    result = predict_pool.select(["vt_symbol"]).with_columns(
+        pl.Series("signal", probas)
+    ).sort("signal", descending=True)
+
+    print(f"\n信号生成完成: {result.height} 只股票")
+    print(f"Top-5: {result.head(5).to_dicts()}")
+    return result
+
+
 if __name__ == "__main__":
     signal_df, vt_symbols = rolling_train()
     print(f"\n最终信号表: {signal_df.shape}")

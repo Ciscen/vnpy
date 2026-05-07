@@ -1,0 +1,21 @@
+{
+  "cash": 85000.0,
+  "positions": [
+    {
+      "symbol": "300394",
+      "name": "天孚通信",
+      "shares": 200,
+      "cost": 25.3,
+      "entry_date": "2026-04-28"
+    },
+    {
+      "symbol": "600519",
+      "name": "贵州茅台",
+      "shares": 100,
+      "cost": 1850.0,
+      "entry_date": "2026-04-21"
+    }
+  ],
+  "cooldowns": {},
+  "updated_at": "2026-05-07T14:11:57.460441"
+}
