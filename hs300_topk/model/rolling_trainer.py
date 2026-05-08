@@ -1,12 +1,19 @@
 """
 hs300_topk/model/rolling_trainer.py
 
-月度滚动（walk-forward）训练流水线（周频信号）：
+月度滚动 walk-forward 训练流水线。
 
-  1. 加载全量日线 → Alpha158 因子
-  2. 生成周度二分类标签
-  3. 按月切分：用截止当月的历史数据训练，下月周一行做预测
-  4. 拼接所有月度信号
+训练原理:
+  - 时间维度严格隔离: 每月用截至上月底的数据训练 XGBoost，预测当月信号
+  - 滑动窗口: 最长回望 TRAIN_YEARS 年，保证样本量与新近性平衡
+  - 训练宇宙: CSI800 全成分股（BaoStock 历史成分），避免幸存者偏差
+
+标签体系:
+  - high_touch（乐观）: 周内最高价触及 tuesday_open × 1.05
+  - friday_close（保守，V1.5 生产）: 周五收盘 ≥ tuesday_open × 1.03
+
+信号输出:
+  DataFrame[datetime, vt_symbol, signal] — signal 为模型输出的上涨概率
 
 用法::
 

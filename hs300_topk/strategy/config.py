@@ -1,12 +1,25 @@
 """
 hs300_topk/strategy/config.py
 
-策略配置体系：将所有可调参数集中管理，支持版本对比。
+策略配置体系 — 将选股、风控、执行三个维度的参数集中管理。
+
+设计原则:
+  - 每个版本一个不可变预设（dataclass frozen=False 仅为序列化方便）
+  - 参数通过 to_dict() 注入策略类的 setting，与 AlphaStrategy 的 setattr 机制对接
+  - 回测/实盘共用同一套参数定义，避免研究/生产偏差
+
+版本演进路线:
+  V1.0  基线（固定止损止盈）
+  V1.1  调仓平滑 + ATR 自适应止损 + 动态 K + 概率加权
+  V1.2  集中持仓 top-8
+  V1.3  + 个股止损冷却 10 天
+  V1.4  集中持仓 top-5
+  V1.5  friday_close 保守标签 + 全面参数重优化（当前生产版本）
 """
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from pathlib import Path
 
 
@@ -71,14 +84,6 @@ class StrategyConfig:
     # 调仓周期
     rebalance_period: int = 1                # 1=每周, 2=双周
 
-    # ── V2.0 信号驱动持仓 ──
-    daily_signal: bool = False               # 是否使用日频信号模式
-    pool_size: int = 30                      # 月度候选池大小
-    signal_horizon: int = 3                  # 信号预测窗口（天）
-    entry_threshold: float = 0.50            # 新建仓最低信号概率
-    renew_threshold: float = 0.40            # 到期续仓最低信号概率
-    max_renewals: int = 3                    # 最大续期次数
-
     # ── 模型参数 ──
     xgb_n_estimators: int = 500
     xgb_max_depth: int = 6
@@ -102,13 +107,10 @@ class StrategyConfig:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
-    def diff(self, other: StrategyConfig) -> dict:
-        """返回两个配置之间的差异"""
-        d1, d2 = self.to_dict(), other.to_dict()
-        return {k: (d1[k], d2[k]) for k in d1 if d1[k] != d2[k]}
 
-
-# ── 预设配置 ──
+# ══════════════════════════════════════════════════════════
+# 预设配置 — 每个版本记录核心参数变更点
+# ══════════════════════════════════════════════════════════
 
 BASELINE_V10 = StrategyConfig(
     version="v1.0",
@@ -223,73 +225,3 @@ OPTIMIZED_V15 = StrategyConfig(
     stock_cooldown_days=10,
 )
 
-OPTIMIZED_V20 = StrategyConfig(
-    version="v2.0",
-    description="V2.0: 月度选池 + 信号驱动持仓（日频标签3日/2%）",
-    daily_signal=True,
-    pool_size=30,
-    signal_horizon=3,
-    entry_threshold=0.50,
-    renew_threshold=0.40,
-    max_renewals=3,
-    top_k=10,
-    stop_loss_pct=0.03,
-    tp_activate_pct=0.03,
-    tp_trail_pct=0.02,
-    max_hold_days=15,
-    smooth_rebalance=False,
-    use_atr_stop=True,
-    atr_stop_multiplier=2.0,
-    atr_stop_min=0.02,
-    atr_stop_max=0.05,
-    absolute_stop_cap=0.10,
-    weight_by_signal=True,
-)
-
-OPTIMIZED_V21 = StrategyConfig(
-    version="v2.1",
-    description="V2.1: V2.0参数优化（收紧入场+延长持仓+快止损）",
-    daily_signal=True,
-    pool_size=20,
-    signal_horizon=5,
-    entry_threshold=0.60,
-    renew_threshold=0.45,
-    max_renewals=4,
-    top_k=10,
-    stop_loss_pct=0.04,
-    tp_activate_pct=0.04,
-    tp_trail_pct=0.02,
-    max_hold_days=20,
-    smooth_rebalance=False,
-    use_atr_stop=True,
-    atr_stop_multiplier=2.0,
-    atr_stop_min=0.02,
-    atr_stop_max=0.05,
-    absolute_stop_cap=0.07,
-    weight_by_signal=True,
-)
-
-OPTIMIZED_V22 = StrategyConfig(
-    version="v2.2",
-    description="V2.2: V2.1 + 保守组合风控（日亏5%清仓+2天冷却）",
-    daily_signal=True,
-    pool_size=20,
-    signal_horizon=5,
-    entry_threshold=0.60,
-    renew_threshold=0.45,
-    max_renewals=4,
-    top_k=10,
-    stop_loss_pct=0.04,
-    tp_activate_pct=0.04,
-    tp_trail_pct=0.02,
-    max_hold_days=20,
-    smooth_rebalance=False,
-    use_atr_stop=True,
-    atr_stop_multiplier=2.0,
-    atr_stop_min=0.02,
-    atr_stop_max=0.05,
-    absolute_stop_cap=0.07,
-    weight_by_signal=True,
-    portfolio_daily_loss_limit=0.05,
-    cooldown_days=2,
-)

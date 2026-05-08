@@ -44,7 +44,7 @@ from pathlib import Path
 import polars as pl
 
 from hs300_topk.pipeline_config import PIPELINE_LIVE
-from hs300_topk.strategy.config import OPTIMIZED_V14
+from hs300_topk.strategy.config import OPTIMIZED_V15
 
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
 LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
@@ -54,7 +54,7 @@ logger = logging.getLogger("run_live")
 
 SIGNAL_DIR = Path(__file__).parent / "live" / "signals"
 LOG_DIR = Path(__file__).parent / "live" / "logs"
-CONFIG = OPTIMIZED_V14
+CONFIG = OPTIMIZED_V15
 
 
 # ══════════════════════════════════════════════════

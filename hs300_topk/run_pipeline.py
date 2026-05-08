@@ -14,11 +14,11 @@ hs300_topk/run_pipeline.py
     # 只运行回测（跳过下载和训练，使用上次信号缓存）
     python -m hs300_topk.run_pipeline --backtest-only
 
-    # 纯样本外回测窗（2025-05-01 ~ 2026-04-30），报告输出到 v1.4_oos/
-    python -m hs300_topk.run_pipeline --backtest-only --config v1.4 --oos-validate
+    # 纯样本外回测窗（2025-05-01 ~ 2026-04-30）
+    python -m hs300_topk.run_pipeline --backtest-only --config v1.5 --oos-validate
 
     # 周频保守标签训练 + 回测（信号缓存在 hs300_topk_weekly_realistic.parquet）
-    python -m hs300_topk.run_pipeline --weekly-label friday_close --config v1.4
+    python -m hs300_topk.run_pipeline --weekly-label friday_close --config v1.5
 """
 from __future__ import annotations
 

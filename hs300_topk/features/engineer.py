@@ -1,8 +1,13 @@
 """
 hs300_topk/features/engineer.py
 
-继承 Alpha158，复用 158 个因子，使用占位标签。
-实际标签由 labeler.py 在 prepare_data 后替换。
+特征工程 — 复用 Qlib Alpha158 的 158 个量价因子。
+
+Alpha158 因子包括: 动量类(ROC/RSI)、波动率类(STD/ATR)、成交量类(VWAP/OBV)、
+均线类(MA/EMA)、以及交叉类特征。全部基于历史价格计算，无未来信息泄漏。
+
+标签由外部 labeler.py 生成后替换，此处仅设置 Alpha158 的占位标签
+以满足 prepare_data 的列计算流程。
 """
 from __future__ import annotations
 

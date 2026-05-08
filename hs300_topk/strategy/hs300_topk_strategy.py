@@ -1,10 +1,23 @@
 """
 hs300_topk/strategy/hs300_topk_strategy.py
 
-HS300 选股策略，继承 AlphaStrategy。周度调仓模式：
+HS300 周度选股策略 — 基于 XGBoost 概率信号的多股票轮动。
 
-- 周一（信号日）: 读取模型信号 → 选 top_k 只股票 → 平旧仓 + 开新仓
-- 周二～周五: 仅做风控检查
+核心思路:
+  1. 每周一收盘后，模型输出每只股票"下周上涨"的概率
+  2. 按概率降序选 top_k 只（动态 K 可根据最高概率缩减）
+  3. 周二开盘买入，持仓期间执行风控
+  4. 周度调仓：已持仓且仍在信号中的股票保持不动（smooth_rebalance）
+
+风控体系（从严到宽）:
+  - 硬止损: 浮亏达 stop_loss_pct 即卖出（ATR 自适应可选）
+  - 追踪止盈: 浮盈达 tp_activate_pct 后激活，从峰值回落 tp_trail_pct 卖出
+  - 最大持仓天数: 超过 max_hold_days 强制退出
+  - 个股冷却: 止损后 N 天内不再买入同只
+
+执行时序（每个 bar 内）:
+  cross_order()  → 撮合昨日挂单
+  on_bars()      → 风控检查 → 调仓决策 → execute_trading → 挂单
 """
 from __future__ import annotations
 
