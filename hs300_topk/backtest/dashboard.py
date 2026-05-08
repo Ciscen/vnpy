@@ -701,36 +701,3 @@ def prepare_stock_charts_data(
     return _json.dumps(data, ensure_ascii=False)
 
 
-def export_stock_details(
-    engine: BacktestingEngine,
-    trade_log_df: pl.DataFrame,
-    output_dir: str,
-    top_n: int = 10,
-) -> None:
-    """导出交易最频繁的 top_n 只个股详情图"""
-    out = Path(output_dir) / "stock_details"
-    out.mkdir(parents=True, exist_ok=True)
-
-    long_val, _ = detect_direction_values(trade_log_df)
-
-    freq = (
-        trade_log_df
-        .filter(pl.col("direction") == long_val)
-        .group_by("vt_symbol")
-        .agg(pl.len().alias("trade_count"))
-        .sort("trade_count", descending=True)
-        .head(top_n)
-    )
-
-    symbols = freq["vt_symbol"].to_list()
-    print(f"  [报告] 生成 {len(symbols)} 只高频交易股票详情图 ...")
-
-    for sym in symbols:
-        try:
-            fig = build_stock_detail_chart(engine, trade_log_df, sym)
-            if fig is not None:
-                path = out / f"{sym.replace('.', '_')}.html"
-                fig.write_html(str(path), include_plotlyjs="cdn")
-                print(f"    -> {path}")
-        except Exception as e:
-            print(f"    [!] {sym} 详情图失败: {e}")

@@ -60,10 +60,6 @@ class PipelineConfig:
         return Path(self.lab_path) / "signal" / "hs300_topk.parquet"
 
     @property
-    def signal_cache_daily(self) -> Path:
-        return Path(self.lab_path) / "signal" / "hs300_topk_daily.parquet"
-
-    @property
     def signal_cache_weekly_realistic(self) -> Path:
         """周频训练使用「周五收盘」保守标签时的信号缓存路径。"""
         return Path(self.lab_path) / "signal" / "hs300_topk_weekly_realistic.parquet"

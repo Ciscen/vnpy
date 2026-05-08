@@ -35,14 +35,11 @@ from vnpy.alpha.strategy import BacktestingEngine
 
 from hs300_topk.data.loader import get_lab, discover_symbols
 from hs300_topk.data.downloader import phase_download
-from hs300_topk.model.rolling_trainer import rolling_train, rolling_train_daily
+from hs300_topk.model.rolling_trainer import rolling_train
 from hs300_topk.strategy.hs300_topk_strategy import HS300Top10Strategy
 from hs300_topk.strategy.config import (
     StrategyConfig, BASELINE_V10, OPTIMIZED_V11, OPTIMIZED_V12,
-    OPTIMIZED_V13, OPTIMIZED_V14,
-    OPTIMIZED_V20,
-    OPTIMIZED_V21,
-    OPTIMIZED_V22,
+    OPTIMIZED_V13, OPTIMIZED_V14, OPTIMIZED_V15,
 )
 from hs300_topk.backtest.evaluation import (
     print_metrics,
@@ -60,41 +57,27 @@ REPORT_DIR = Path("hs300_topk") / "output"
 def phase_train(
     pipe: PipelineConfig,
     *,
-    daily: bool = False,
     weekly_label: str = "high_touch",
 ) -> pl.DataFrame:
     """执行滚动训练，返回信号 DataFrame。结果会缓存到磁盘。"""
-    mode_label = "日频" if daily else "周频"
-    if daily:
-        cache_path = pipe.signal_cache_daily
-    else:
-        cache_path = (
-            pipe.signal_cache_weekly_realistic
-            if weekly_label == "friday_close"
-            else pipe.signal_cache
-        )
+    cache_path = (
+        pipe.signal_cache_weekly_realistic
+        if weekly_label == "friday_close"
+        else pipe.signal_cache
+    )
 
     print("\n" + "=" * 60)
-    print(f"  Phase 2: {mode_label}滚动训练")
+    print("  Phase 2: 周频滚动训练")
     print("=" * 60)
 
-    if daily:
-        signal_df, _ = rolling_train_daily(
-            lab_path=pipe.lab_path,
-            data_start=pipe.data_start,
-            data_end=pipe.data_end,
-            backtest_start=pipe.backtest_start,
-            backtest_end=pipe.backtest_end,
-        )
-    else:
-        signal_df, _ = rolling_train(
-            lab_path=pipe.lab_path,
-            data_start=pipe.data_start,
-            data_end=pipe.data_end,
-            backtest_start=pipe.backtest_start,
-            backtest_end=pipe.backtest_end,
-            weekly_label=weekly_label,
-        )
+    signal_df, _ = rolling_train(
+        lab_path=pipe.lab_path,
+        data_start=pipe.data_start,
+        data_end=pipe.data_end,
+        backtest_start=pipe.backtest_start,
+        backtest_end=pipe.backtest_end,
+        weekly_label=weekly_label,
+    )
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     signal_df.write_parquet(cache_path)
@@ -107,23 +90,18 @@ def phase_train_or_load(
     pipe: PipelineConfig,
     *,
     skip_train: bool = False,
-    daily: bool = False,
     weekly_label: str = "high_touch",
 ) -> pl.DataFrame:
     """加载缓存信号或执行训练"""
-    if daily:
-        cache_path = pipe.signal_cache_daily
-    else:
-        cache_path = (
-            pipe.signal_cache_weekly_realistic
-            if weekly_label == "friday_close"
-            else pipe.signal_cache
-        )
+    cache_path = (
+        pipe.signal_cache_weekly_realistic
+        if weekly_label == "friday_close"
+        else pipe.signal_cache
+    )
 
     if skip_train and cache_path.exists():
-        mode_label = "日频" if daily else "周频"
         print("\n" + "=" * 60)
-        print(f"  Phase 2: 加载{mode_label}缓存信号 (跳过训练)")
+        print("  Phase 2: 加载周频缓存信号 (跳过训练)")
         print("=" * 60)
         signal_df = pl.read_parquet(cache_path)
         print(f"  缓存文件: {cache_path}")
@@ -131,7 +109,7 @@ def phase_train_or_load(
               f"{signal_df['datetime'].min()} ~ {signal_df['datetime'].max()}")
         return signal_df
 
-    return phase_train(pipe, daily=daily, weekly_label=weekly_label)
+    return phase_train(pipe, weekly_label=weekly_label)
 
 
 # ══════════════════════════════════════════════════════════
@@ -273,7 +251,7 @@ def main() -> None:
                         help="仅回测（使用上次训练的信号缓存）")
     parser.add_argument("--skip-download", action="store_true",
                         help="跳过数据下载（使用已有 lab 数据）")
-    parser.add_argument("--config", choices=["v1.0", "v1.1", "v1.2", "v1.3", "v1.4", "v2.0", "v2.1", "v2.2", "compare"], default="v1.3",
+    parser.add_argument("--config", choices=["v1.0", "v1.1", "v1.2", "v1.3", "v1.4", "v1.5", "compare"], default="v1.3",
                         help="策略配置版本 (默认 v1.3，compare=同时运行所有版本)")
     parser.add_argument("--config-file", type=str, default=None,
                         help="自定义配置文件路径 (JSON)")
@@ -296,10 +274,7 @@ def main() -> None:
     config_map = {
         "v1.0": BASELINE_V10, "v1.1": OPTIMIZED_V11,
         "v1.2": OPTIMIZED_V12, "v1.3": OPTIMIZED_V13,
-        "v1.4": OPTIMIZED_V14,
-        "v2.0": OPTIMIZED_V20,
-        "v2.1": OPTIMIZED_V21,
-        "v2.2": OPTIMIZED_V22,
+        "v1.4": OPTIMIZED_V14, "v1.5": OPTIMIZED_V15,
     }
 
     if args.config_file:
@@ -339,13 +314,10 @@ def main() -> None:
         print(f"\n  使用已有数据: {len(vt_symbols)} 只股票")
 
     # Phase 2: 训练
-    use_daily = config.daily_signal if config else False
-    weekly_label = "high_touch" if use_daily else args.weekly_label
     signal_df = phase_train_or_load(
         pipe,
         skip_train=args.backtest_only,
-        daily=use_daily,
-        weekly_label=weekly_label,
+        weekly_label=args.weekly_label,
     )
 
     # 可选: 过滤到当前 HS300 成分股（用于对比测试）
@@ -365,22 +337,13 @@ def main() -> None:
     # Phase 3: 回测 + 报告
     dashboard_path: Path | None = None
     report_subdir_suffix = "_oos" if args.oos_validate else ""
-    if not use_daily and args.weekly_label == "friday_close":
+    if args.weekly_label == "friday_close":
         report_subdir_suffix += "_lbl_friday_close"
 
     if args.config == "compare":
         results = []
         for ver, cfg in config_map.items():
-            if cfg.daily_signal:
-                ver_signal = phase_train_or_load(
-                    pipe,
-                    skip_train=args.backtest_only,
-                    daily=True,
-                    weekly_label="high_touch",
-                )
-            else:
-                ver_signal = signal_df
-            stats = phase_backtest(ver_signal, pipe, config=cfg)
+            stats = phase_backtest(signal_df, pipe, config=cfg)
             results.append((ver, stats))
         _compare_results(results, REPORT_DIR)
     else:

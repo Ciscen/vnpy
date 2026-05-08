@@ -1,19 +1,12 @@
 """
 hs300_topk/model/rolling_trainer.py
 
-月度滚动（walk-forward）训练流水线，支持周频和日频两种模式：
+月度滚动（walk-forward）训练流水线（周频信号）：
 
-周频模式 (rolling_train):
   1. 加载全量日线 → Alpha158 因子
   2. 生成周度二分类标签
   3. 按月切分：用截止当月的历史数据训练，下月周一行做预测
   4. 拼接所有月度信号
-
-日频模式 (rolling_train_daily):
-  1. 加载全量日线 → Alpha158 因子
-  2. 生成日频二分类标签（3日/2%）
-  3. 按月切分：用全量日线训练，下月所有交易日做预测
-  4. 拼接所有月度信号（每日每股一行）
 
 用法::
 
@@ -33,7 +26,6 @@ from hs300_topk.features.engineer import HS300Top10Dataset
 from hs300_topk.features.labeler import (
     generate_weekly_labels,
     generate_weekly_labels_realistic,
-    generate_daily_labels,
 )
 from hs300_topk.pipeline_config import PIPELINE
 
@@ -293,67 +285,6 @@ def rolling_train(
     )
 
     print(f"\n信号生成完成: {signal_df.shape[0]} 行")
-    print(f"日期范围: {signal_df['datetime'].min()} ~ {signal_df['datetime'].max()}")
-    return signal_df, vt_symbols
-
-
-def rolling_train_daily(
-    lab_path: str = DEFAULT_LAB_PATH,
-    data_start: str = DATA_START,
-    data_end: str = DATA_END,
-    backtest_start: str = BACKTEST_START,
-    backtest_end: str = BACKTEST_END,
-    train_years: int = TRAIN_YEARS,
-    max_workers: int = 4,
-    rise_thresh: float = 0.02,
-    horizon: int = 3,
-) -> tuple[pl.DataFrame, list[str]]:
-    """执行月度滚动训练（日频模式）并返回完整信号表。
-
-    与 rolling_train 的区别：
-    - 使用日频标签（未来 horizon 天涨 rise_thresh）替代周度标签
-    - 训练和预测使用全量日线，不过滤 weekday
-    - 输出 signal_df 每日每股一行
-
-    Returns
-    -------
-    signal_df : pl.DataFrame
-        (datetime, vt_symbol, signal) — 覆盖 backtest 区间的完整日频信号
-    vt_symbols : list[str]
-        参与回测的股票列表
-    """
-    print("=" * 60)
-    print("  HS300 Top-K 日频滚动训练")
-    print(f"  标签: 未来{horizon}日涨{rise_thresh*100:.0f}%")
-    print("=" * 60)
-
-    bar_df, raw_features, vt_symbols = _load_features(
-        lab_path, data_start, data_end, backtest_end, max_workers,
-    )
-
-    # ── Step 3: 生成日频标签 & 合并 ──
-    print(f"\n[Step 3/4] 生成日频标签 (horizon={horizon}, thresh={rise_thresh}) ...")
-    labels_df = generate_daily_labels(bar_df, rise_thresh=rise_thresh, horizon=horizon)
-    print(f"  标签总数: {labels_df.shape[0]} (正例率: {labels_df['label'].mean():.2%})")
-
-    daily_with_labels = raw_features.drop("label").join(
-        labels_df, on=["datetime", "vt_symbol"], how="left"
-    )
-    print(f"  日频特征行数: {daily_with_labels.shape[0]}")
-
-    # ── Step 4: 逐月滚动训练 ──
-    print(f"\n[Step 4/4] 逐月滚动训练 ({backtest_start} ~ {backtest_end}) ...")
-    label_gap_days = horizon * 2 + 1
-    signal_df = _rolling_loop(
-        feature_df=daily_with_labels,
-        backtest_start=backtest_start,
-        backtest_end=backtest_end,
-        train_years=train_years,
-        label_gap_days=label_gap_days,
-        min_train_samples=500,
-    )
-
-    print(f"\n日频信号生成完成: {signal_df.shape[0]} 行")
     print(f"日期范围: {signal_df['datetime'].min()} ~ {signal_df['datetime'].max()}")
     return signal_df, vt_symbols
 

@@ -35,21 +35,3 @@ class HS300Top10Dataset(Alpha158):
         # 这里不覆盖，让 prepare_data 正常计算。
         # 真正的二分类标签将在后续通过 replace_labels() 替换。
 
-    def replace_labels(self, labels_df: pl.DataFrame) -> None:
-        """用外部计算的周度二分类标签替换 raw_df/learn_df/infer_df 中的 label 列。
-
-        Parameters
-        ----------
-        labels_df : pl.DataFrame
-            必须包含 (datetime, vt_symbol, label) 三列，
-            datetime 对应周一日期。
-        """
-        for attr in ("raw_df", "learn_df", "infer_df"):
-            df: pl.DataFrame = getattr(self, attr)
-
-            df = df.drop("label").join(
-                labels_df.select(["datetime", "vt_symbol", "label"]),
-                on=["datetime", "vt_symbol"],
-                how="left",
-            )
-            setattr(self, attr, df)
