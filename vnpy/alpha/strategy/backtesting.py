@@ -19,6 +19,36 @@ from ..lab import AlphaLab
 from .template import AlphaStrategy
 
 
+def _cn_a_share_limit_multipliers(vt_symbol: str) -> tuple[float, float]:
+    """Return (limit_up_mult, limit_down_mult) vs previous close.
+
+    ChiNext (300/301) and STAR (688) boards use ±20%; main board uses ±10%.
+    """
+    symbol, _ = extract_vt_symbol(vt_symbol)
+    if symbol.startswith(("300", "301", "688")):
+        return 1.2, 0.8
+    return 1.1, 0.9
+
+
+def _is_forward_filled_no_trade_bar(bar: BarData) -> bool:
+    """True when bar looks like a synthetic forward-fill (no session, no volume).
+
+    ``new_bars`` builds such bars when a symbol has no row for ``dt`` but had
+    a prior bar; matching against them would incorrectly allow trades on
+    suspended / missing-data dates.
+    """
+    if bar.volume != 0:
+        return False
+    o = bar.open_price
+    h = bar.high_price
+    l = bar.low_price
+    c = bar.close_price
+    if o <= 0 or h <= 0 or l <= 0 or c <= 0:
+        return False
+    tol = max(o * 1e-9, 1e-8)
+    return abs(o - h) <= tol and abs(o - l) <= tol and abs(o - c) <= tol
+
+
 class BacktestingEngine:
     """Alpha strategy backtesting engine"""
 
@@ -603,6 +633,7 @@ class BacktestingEngine:
                     symbol=old_bar.symbol,
                     exchange=old_bar.exchange,
                     datetime=dt,
+                    volume=0.0,
                     open_price=old_bar.close_price,
                     high_price=old_bar.close_price,
                     low_price=old_bar.close_price,
@@ -621,6 +652,9 @@ class BacktestingEngine:
         for order in list(self.active_limit_orders.values()):
             bar: BarData = self.bars[order.vt_symbol]
 
+            if _is_forward_filled_no_trade_bar(bar):
+                continue
+
             long_cross_price: float = bar.low_price
             short_cross_price: float = bar.high_price
             long_best_price: float = bar.open_price
@@ -635,8 +669,9 @@ class BacktestingEngine:
             pricetick: float = self.priceticks[order.vt_symbol]
             pre_close: float = self.pre_closes.get(order.vt_symbol, 0)
 
-            limit_up: float = round_to(pre_close * 1.1, pricetick)
-            limit_down: float = round_to(pre_close * 0.9, pricetick)
+            up_mult, down_mult = _cn_a_share_limit_multipliers(order.vt_symbol)
+            limit_up: float = round_to(pre_close * up_mult, pricetick)
+            limit_down: float = round_to(pre_close * down_mult, pricetick)
 
             # Check limit orders that can be matched
             long_cross: bool = (

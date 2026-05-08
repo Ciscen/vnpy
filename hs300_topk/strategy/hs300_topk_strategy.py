@@ -509,7 +509,11 @@ class HS300Top10Strategy(AlphaStrategy):
 
         change_pct = (bar.close_price - prev_close) / prev_close
 
-        is_wide_limit = symbol.startswith("300") or symbol.startswith("688")
+        is_wide_limit = (
+            symbol.startswith("300")
+            or symbol.startswith("301")
+            or symbol.startswith("688")
+        )
         threshold = 0.18 if is_wide_limit else 0.09
 
         return change_pct >= threshold

@@ -30,7 +30,11 @@ import xgboost as xgb
 
 from hs300_topk.data.loader import discover_symbols, get_lab, load_bar_df
 from hs300_topk.features.engineer import HS300Top10Dataset
-from hs300_topk.features.labeler import generate_weekly_labels, generate_daily_labels
+from hs300_topk.features.labeler import (
+    generate_weekly_labels,
+    generate_weekly_labels_realistic,
+    generate_daily_labels,
+)
 from hs300_topk.pipeline_config import PIPELINE
 
 # ──────────────────────────────────────────────────
@@ -236,18 +240,24 @@ def rolling_train(
     backtest_end: str = BACKTEST_END,
     train_years: int = TRAIN_YEARS,
     max_workers: int = 4,
+    *,
+    weekly_label: str = "high_touch",
 ) -> tuple[pl.DataFrame, list[str]]:
     """执行月度滚动训练（周频模式）并返回完整信号表。
 
-    Returns
-    -------
-    signal_df : pl.DataFrame
-        (datetime, vt_symbol, signal) — 覆盖 backtest 区间的完整信号
-    vt_symbols : list[str]
-        参与回测的股票列表
+    Parameters
+    ----------
+    weekly_label : str
+        ``high_touch`` — 周内最高价触及阈值（默认 ``RISE_THRESH``）;
+        ``friday_close`` — 保守标签：周内最后一日收盘相对周二开盘涨幅阈值
+        （``REALISTIC_CLOSE_THRESH``，默认 +3%）。
     """
     print("=" * 60)
     print("  HS300 Top-K 滚动训练")
+    if weekly_label == "friday_close":
+        print("  标签模式: 周内最后收盘 vs 周二开盘 (保守对照)")
+    else:
+        print("  标签模式: 周内 high 触及 (默认)")
     print("=" * 60)
 
     bar_df, raw_features, vt_symbols = _load_features(
@@ -256,7 +266,10 @@ def rolling_train(
 
     # ── Step 3: 生成周度标签 & 合并 ──
     print("\n[Step 3/4] 生成周度标签 ...")
-    labels_df = generate_weekly_labels(bar_df)
+    if weekly_label == "friday_close":
+        labels_df = generate_weekly_labels_realistic(bar_df)
+    else:
+        labels_df = generate_weekly_labels(bar_df)
     print(f"  标签总数: {labels_df.shape[0]} (正例率: {labels_df['label'].mean():.2%})")
 
     monday_features = raw_features.with_columns(

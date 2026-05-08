@@ -8,6 +8,11 @@ hs300_topk/features/labeler.py
   - 入场价：周二开盘价
   - 标签=1 ：周二开盘到周五收盘期间，最高价 >= 周二开盘价 * (1 + RISE_THRESH)
 
+周度保守标签 (generate_weekly_labels_realistic, 对照):
+  - 同上基准日与周二开盘价
+  - 标签=1 ：本周最后一个交易日收盘价 >= 周二开盘价 * (1 + REALISTIC_CLOSE_THRESH)
+    （默认 +3%，持有到周期末的可实现收益 proxy）
+
 日频标签 (generate_daily_labels):
   - 基准日：每个交易日
   - 基准价：当日收盘价
@@ -19,6 +24,7 @@ import polars as pl
 
 RISE_THRESH: float = 0.05
 WEEK_HORIZON: int = 4  # 周二到周五共 4 个交易日
+REALISTIC_CLOSE_THRESH: float = 0.03  # 方案 B：周五（或周内最后一日）收盘相对周二开盘
 
 DAILY_RISE_THRESH: float = 0.02
 DAILY_HORIZON: int = 3
@@ -84,6 +90,85 @@ def generate_weekly_labels(
             max_high = max(highs[i] for i in horizon_idx)
             label = 1 if max_high >= tuesday_open * (1 + rise_thresh) else 0
 
+            labels.append({
+                "datetime": monday_dt,
+                "vt_symbol": sym_name,
+                "label": label,
+            })
+
+        if labels:
+            all_labels.append(pl.DataFrame(labels))
+
+    if not all_labels:
+        return pl.DataFrame(
+            schema={"datetime": pl.Datetime, "vt_symbol": pl.Utf8, "label": pl.Int64}
+        )
+
+    result = pl.concat(all_labels).sort(["datetime", "vt_symbol"])
+    result = result.with_columns(pl.col("label").cast(pl.Float64))
+    return result
+
+
+def generate_weekly_labels_realistic(
+    df: pl.DataFrame,
+    close_rise_thresh: float = REALISTIC_CLOSE_THRESH,
+) -> pl.DataFrame:
+    """周内「持有到期」风格的保守二分类标签（对照组，不替换 optimistic 标签）。
+
+    对每周一：取周二开盘价与随后最多 ``WEEK_HORIZON`` 个交易日；
+    若周内最后一日收盘价 >= 周二开盘价 * (1 + close_rise_thresh)，则 label=1。
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        日线数据，需包含 datetime, vt_symbol, open, close 列。
+    close_rise_thresh : float
+        默认 0.03（+3%）。
+
+    Returns
+    -------
+    pl.DataFrame
+        (datetime, vt_symbol, label) — datetime 为周一日期。
+    """
+    work_df = df.select(["datetime", "vt_symbol", "open", "close"]).sort(
+        ["vt_symbol", "datetime"]
+    )
+    work_df = work_df.with_columns(pl.col("datetime").dt.weekday().alias("weekday"))
+
+    all_labels: list[pl.DataFrame] = []
+
+    for symbol, grp in work_df.group_by("vt_symbol"):
+        grp = grp.sort("datetime")
+        sym_name = symbol[0] if isinstance(symbol, tuple) else symbol
+
+        mondays = grp.filter(pl.col("weekday") == 1)
+        if mondays.is_empty():
+            continue
+
+        dates = grp["datetime"]
+        opens = grp["open"]
+        closes = grp["close"]
+
+        labels: list[dict] = []
+        for monday_dt in mondays["datetime"]:
+            mask = dates > monday_dt
+            future_indices = [i for i, v in enumerate(mask) if v]
+
+            if not future_indices:
+                continue
+
+            horizon_end = min(len(future_indices), WEEK_HORIZON)
+            horizon_idx = future_indices[:horizon_end]
+
+            tuesday_open = opens[horizon_idx[0]]
+            if tuesday_open is None or tuesday_open <= 0:
+                continue
+
+            last_close = closes[horizon_idx[-1]]
+            if last_close is None or last_close <= 0:
+                continue
+
+            label = 1 if last_close >= tuesday_open * (1 + close_rise_thresh) else 0
             labels.append({
                 "datetime": monday_dt,
                 "vt_symbol": sym_name,
