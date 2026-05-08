@@ -103,6 +103,7 @@ class HS300Top10Strategy(AlphaStrategy):
             if self.stock_cooldown_days > 0 and "stop_loss" in reason:
                 self._stock_cooldowns[trade.vt_symbol] = self.stock_cooldown_days
             self._clear_tracking(trade.vt_symbol)
+            self.target_data[trade.vt_symbol] = 0
         else:
             reason = "unknown"
 

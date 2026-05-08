@@ -251,8 +251,8 @@ def main() -> None:
                         help="仅回测（使用上次训练的信号缓存）")
     parser.add_argument("--skip-download", action="store_true",
                         help="跳过数据下载（使用已有 lab 数据）")
-    parser.add_argument("--config", choices=["v1.0", "v1.1", "v1.2", "v1.3", "v1.4", "v1.5", "compare"], default="v1.3",
-                        help="策略配置版本 (默认 v1.3，compare=同时运行所有版本)")
+    parser.add_argument("--config", choices=["v1.0", "v1.1", "v1.2", "v1.3", "v1.4", "v1.5", "compare"], default="v1.5",
+                        help="策略配置版本 (默认 v1.5，compare=同时运行所有版本)")
     parser.add_argument("--config-file", type=str, default=None,
                         help="自定义配置文件路径 (JSON)")
     parser.add_argument("--oos-validate", action="store_true",
