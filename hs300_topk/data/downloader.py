@@ -1,7 +1,15 @@
 """
 hs300_topk/data/downloader.py
 
-CSI800 (HS300+CSI500) 日线数据下载模块（增量更新 + 基准指数）。
+日线数据下载模块 — 确保训练宇宙的完整性。
+
+下载范围:
+  1. 当前 CSI800 (HS300+CSI500) 成分股（AKShare）
+  2. 历史 HS300 成分但不在当前 CSI800 的股票（BaoStock 快照补充）
+  3. 沪深 300 指数基准数据
+
+这样可以确保 PIT（Point-in-Time）成分过滤时，所有历史成分都有数据可用，
+从根本上消除因数据缺失导致的幸存者偏差。
 
 可独立使用::
 
@@ -220,6 +228,65 @@ def _fetch_hs300_snapshots(
     return snapshots
 
 
+def _download_historical_hs300_members(
+    lab: AlphaLab,
+    daily_path: Path,
+    ak_start: str,
+    ak_end: str,
+    target_end: datetime,
+) -> None:
+    """补充下载历史 HS300 成分但不在当前 CSI800 中的股票。
+
+    用 BaoStock 历史快照获取所有曾在 HS300 中的股票，检查 lab 中是否已有数据，
+    缺失的则用 AKShare 下载。这确保 PIT 过滤时不会因为数据缺失而丢掉样本。
+    """
+    print("\n  补充下载历史 HS300 成分 ...", flush=True)
+    try:
+        snapshots = _fetch_hs300_snapshots()
+    except Exception as e:
+        print(f"  ⚠ 获取历史快照失败 ({e})，跳过补充下载", flush=True)
+        return
+
+    all_historical: set[str] = set()
+    for members in snapshots.values():
+        all_historical.update(members)
+
+    existing = set(f.stem for f in daily_path.glob("*.parquet"))
+    missing = sorted(all_historical - existing)
+
+    if not missing:
+        print(f"  历史成分 {len(all_historical)} 只全部已覆盖", flush=True)
+        return
+
+    print(f"  历史成分累计 {len(all_historical)} 只, 已有 {len(existing & all_historical)} 只, "
+          f"缺失 {len(missing)} 只", flush=True)
+
+    downloaded = 0
+    failed = 0
+    for i, vt_symbol in enumerate(missing, 1):
+        code = vt_symbol.split(".")[0]
+        ak_symbol = f"sh{code}" if code.startswith(("6", "5")) else f"sz{code}"
+
+        df = download_one(ak_symbol, ak_start, ak_end)
+        if df is None or df.empty:
+            failed += 1
+            if failed <= 5 or failed % 20 == 0:
+                print(f"    [{i}/{len(missing)}] {vt_symbol} 无数据", flush=True)
+            continue
+
+        exchange = symbol_to_exchange(code)
+        bars = ak_rows_to_bars(df, code, exchange)
+        lab.save_bar_data(bars)
+        lab.add_contract_setting(vt_symbol, LONG_RATE, SHORT_RATE, SIZE, PRICETICK)
+
+        downloaded += 1
+        if downloaded <= 5 or downloaded % 20 == 0:
+            print(f"    [{i}/{len(missing)}] {vt_symbol}: {len(bars)} 根日线", flush=True)
+        time.sleep(SLEEP_BETWEEN)
+
+    print(f"  补充完成: 新增 {downloaded} 只, 无数据 {failed} 只", flush=True)
+
+
 def ensure_component_index(lab: AlphaLab, vt_symbols: list[str]) -> None:
     """使用 BaoStock 历史数据构建逐日成分股索引，消除幸存者偏差。
 
@@ -403,6 +470,9 @@ def phase_download(
     print(f"\n  下载完成: 成功 {success} (跳过 {skipped}, 增量更新 {incremental}), 失败 {len(failed)}")
     if failed:
         print(f"  失败列表: {failed[:20]}{'...' if len(failed) > 20 else ''}")
+
+    # Phase 1b: 补充下载历史 HS300 成分股（消除幸存者偏差）
+    _download_historical_hs300_members(lab, daily_path, ak_start, ak_end, target_end)
 
     download_benchmark(lab, lab_path, ak_start, ak_end)
 
