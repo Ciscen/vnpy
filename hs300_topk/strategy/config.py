@@ -13,8 +13,8 @@ hs300_topk/strategy/config.py
   V1.1  调仓平滑 + ATR 自适应止损 + 动态 K + 概率加权
   V1.2  集中持仓 top-8
   V1.3  + 个股止损冷却 10 天
-  V1.4  集中持仓 top-5
-  V1.5  friday_close 保守标签 + 全面参数重优化（当前生产版本）
+  V1.4  集中持仓 top-5 + Lag-3 特征（当前生产版本）
+  V1.5  friday_close 保守标签 + 全面参数重优化（已验证不如 V1.4）
 """
 from __future__ import annotations
 
@@ -183,7 +183,7 @@ OPTIMIZED_V13 = StrategyConfig(
 
 OPTIMIZED_V14 = StrategyConfig(
     version="v1.4",
-    description="V1.4: V1.3 + 集中持仓(top5)",
+    description="V1.4: V1.3 + 集中持仓(top5) + Lag-3 (当前生产版本)",
     smooth_rebalance=True,
     max_replace_ratio=0.7,
     use_atr_stop=True,

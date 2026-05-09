@@ -5,7 +5,7 @@ hs300_topk/run_pipeline.py
 
 用法::
 
-    # 完整流水线（跳过已有缓存）
+    # 完整流水线（默认 V1.4 + Lag-3 + friday_close）
     python -m hs300_topk.run_pipeline
 
     # 强制重新下载数据
@@ -15,10 +15,10 @@ hs300_topk/run_pipeline.py
     python -m hs300_topk.run_pipeline --backtest-only
 
     # 纯样本外回测窗（2025-05-01 ~ 2026-04-30）
-    python -m hs300_topk.run_pipeline --backtest-only --config v1.5 --oos-validate
+    python -m hs300_topk.run_pipeline --backtest-only --config v1.4 --oos-validate
 
-    # 周频保守标签训练 + 回测（信号缓存在 hs300_topk_weekly_realistic.parquet）
-    python -m hs300_topk.run_pipeline --weekly-label friday_close --config v1.5
+    # 禁用 Lag 特征对比
+    python -m hs300_topk.run_pipeline --lag-days 0
 """
 from __future__ import annotations
 
@@ -58,6 +58,7 @@ def phase_train(
     pipe: PipelineConfig,
     *,
     weekly_label: str = "high_touch",
+    lag_days: int = 0,
 ) -> pl.DataFrame:
     """执行滚动训练，返回信号 DataFrame。结果会缓存到磁盘。"""
     cache_path = (
@@ -77,6 +78,7 @@ def phase_train(
         backtest_start=pipe.backtest_start,
         backtest_end=pipe.backtest_end,
         weekly_label=weekly_label,
+        lag_days=lag_days,
     )
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -91,6 +93,7 @@ def phase_train_or_load(
     *,
     skip_train: bool = False,
     weekly_label: str = "high_touch",
+    lag_days: int = 0,
 ) -> pl.DataFrame:
     """加载缓存信号或执行训练"""
     cache_path = (
@@ -109,7 +112,7 @@ def phase_train_or_load(
               f"{signal_df['datetime'].min()} ~ {signal_df['datetime'].max()}")
         return signal_df
 
-    return phase_train(pipe, weekly_label=weekly_label)
+    return phase_train(pipe, weekly_label=weekly_label, lag_days=lag_days)
 
 
 # ══════════════════════════════════════════════════════════
@@ -251,8 +254,8 @@ def main() -> None:
                         help="仅回测（使用上次训练的信号缓存）")
     parser.add_argument("--skip-download", action="store_true",
                         help="跳过数据下载（使用已有 lab 数据）")
-    parser.add_argument("--config", choices=["v1.0", "v1.1", "v1.2", "v1.3", "v1.4", "v1.5", "compare"], default="v1.5",
-                        help="策略配置版本 (默认 v1.5，compare=同时运行所有版本)")
+    parser.add_argument("--config", choices=["v1.0", "v1.1", "v1.2", "v1.3", "v1.4", "v1.5", "compare"], default="v1.4",
+                        help="策略配置版本 (默认 v1.4，compare=同时运行所有版本)")
     parser.add_argument("--config-file", type=str, default=None,
                         help="自定义配置文件路径 (JSON)")
     parser.add_argument("--oos-validate", action="store_true",
@@ -263,12 +266,14 @@ def main() -> None:
     parser.add_argument(
         "--weekly-label",
         choices=["high_touch", "friday_close"],
-        default="high_touch",
+        default="friday_close",
         help="周频训练标签：high_touch=周内high触及+5%%；"
              "friday_close=保守对照，周内最后收盘 vs 周二开盘 +3%%",
     )
     parser.add_argument("--filter-hs300", action="store_true",
                         help="回测时信号只保留当前 HS300 成分股（模拟生产选股限制）")
+    parser.add_argument("--lag-days", type=int, default=3,
+                        help="拼接前 N 天的特征（0=禁用，3=前3天，即周三+周四+周五）")
     args = parser.parse_args()
 
     config_map = {
@@ -318,6 +323,7 @@ def main() -> None:
         pipe,
         skip_train=args.backtest_only,
         weekly_label=args.weekly_label,
+        lag_days=args.lag_days,
     )
 
     # 可选: 过滤到当前 HS300 成分股（用于对比测试）

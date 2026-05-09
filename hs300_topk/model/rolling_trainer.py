@@ -36,6 +36,45 @@ from hs300_topk.features.labeler import (
 )
 from hs300_topk.pipeline_config import PIPELINE
 
+
+def _add_lagged_day_features(
+    monday_df: pl.DataFrame,
+    all_features: pl.DataFrame,
+    lag_days: int,
+) -> pl.DataFrame:
+    """将周一前 N 个交易日的全量特征拼接到每行周一数据上。
+
+    例如 lag_days=2 时，对每个周一，找该股票的前 2 个交易日特征，
+    列名加 _d1, _d2 后缀，拼接为一行。
+    """
+    meta_cols = {"datetime", "vt_symbol", "label"}
+    feat_cols = [c for c in all_features.columns if c not in meta_cols]
+
+    all_sorted = all_features.sort(["vt_symbol", "datetime"])
+
+    lag_dfs: list[pl.DataFrame] = []
+    for d in range(1, lag_days + 1):
+        shifted = all_sorted.with_columns(
+            pl.col("datetime").shift(-d).over("vt_symbol").alias("_target_monday"),
+        )
+        shifted = shifted.rename(
+            {c: f"{c}_d{d}" for c in feat_cols}
+        ).select(
+            [pl.col("_target_monday").alias("datetime"),
+             pl.col("vt_symbol")]
+            + [pl.col(f"{c}_d{d}") for c in feat_cols]
+        )
+        lag_dfs.append(shifted)
+
+    result = monday_df
+    for ldf in lag_dfs:
+        result = result.join(
+            ldf, on=["datetime", "vt_symbol"], how="left",
+        )
+
+    return result
+
+
 # ──────────────────────────────────────────────────
 # 默认配置 — 来自 pipeline_config 统一管理
 # ──────────────────────────────────────────────────
@@ -241,6 +280,7 @@ def rolling_train(
     max_workers: int = 4,
     *,
     weekly_label: str = "high_touch",
+    lag_days: int = 0,
 ) -> tuple[pl.DataFrame, list[str]]:
     """执行月度滚动训练（周频模式）并返回完整信号表。
 
@@ -278,6 +318,16 @@ def rolling_train(
     monday_with_labels = monday_features.drop("label").join(
         labels_df, on=["datetime", "vt_symbol"], how="left"
     )
+
+    if lag_days and lag_days > 0:
+        print(f"\n  [增强] 拼接前 {lag_days} 天特征 ...")
+        before_cols = monday_with_labels.shape[1]
+        monday_with_labels = _add_lagged_day_features(
+            monday_with_labels, raw_features, lag_days,
+        )
+        added = monday_with_labels.shape[1] - before_cols
+        print(f"  新增 {added} 个 lag 特征")
+
     print(f"  周一特征行数: {monday_with_labels.shape[0]}")
 
     # ── Step 4: 逐月滚动训练 ──
@@ -302,14 +352,18 @@ def predict_live(
     data_start: str = DATA_START,
     train_years: int = TRAIN_YEARS,
     max_workers: int = 4,
+    *,
+    weekly_label: str = "friday_close",
+    lag_days: int = 3,
 ) -> pl.DataFrame:
     """为单个目标日期（周一）生成所有股票的信号概率。
 
     流程：
     1. 加载日线 → Alpha158 特征（data_start ~ target_date）
     2. 生成周度标签
-    3. 用 target_date 之前的历史数据训练一次 XGBoost
-    4. 对 target_date 当天所有股票做预测
+    3. 可选拼接 lag 天特征
+    4. 用 target_date 之前的历史数据训练一次 XGBoost
+    5. 对 target_date 当天所有股票做预测
 
     Parameters
     ----------
@@ -323,6 +377,10 @@ def predict_live(
         训练窗口年限。
     max_workers : int
         特征计算并行度。
+    weekly_label : str
+        标签模式（``friday_close`` 或 ``high_touch``）。
+    lag_days : int
+        拼接前 N 天的每日全量特征（0=禁用）。
 
     Returns
     -------
@@ -340,7 +398,10 @@ def predict_live(
     )
 
     print("\n[Step 3] 生成周度标签 ...")
-    labels_df = generate_weekly_labels(bar_df)
+    if weekly_label == "friday_close":
+        labels_df = generate_weekly_labels_realistic(bar_df)
+    else:
+        labels_df = generate_weekly_labels(bar_df)
 
     monday_features = raw_features.with_columns(
         pl.col("datetime").dt.weekday().alias("_weekday")
@@ -349,6 +410,15 @@ def predict_live(
     monday_with_labels = monday_features.drop("label").join(
         labels_df, on=["datetime", "vt_symbol"], how="left"
     )
+
+    if lag_days and lag_days > 0:
+        print(f"\n  [增强] 拼接前 {lag_days} 天特征 ...")
+        before_cols = monday_with_labels.shape[1]
+        monday_with_labels = _add_lagged_day_features(
+            monday_with_labels, raw_features, lag_days,
+        )
+        added = monday_with_labels.shape[1] - before_cols
+        print(f"  新增 {added} 个 lag 特征")
 
     feature_cols = [
         c for c in monday_with_labels.columns

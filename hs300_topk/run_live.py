@@ -44,7 +44,7 @@ from pathlib import Path
 import polars as pl
 
 from hs300_topk.pipeline_config import PIPELINE_LIVE
-from hs300_topk.strategy.config import OPTIMIZED_V15
+from hs300_topk.strategy.config import OPTIMIZED_V14
 
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
 LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
@@ -54,7 +54,7 @@ logger = logging.getLogger("run_live")
 
 SIGNAL_DIR = Path(__file__).parent / "live" / "signals"
 LOG_DIR = Path(__file__).parent / "live" / "logs"
-CONFIG = OPTIMIZED_V15
+CONFIG = OPTIMIZED_V14
 
 
 # ══════════════════════════════════════════════════
@@ -556,11 +556,13 @@ def main() -> None:
             lab_path=lab_path,
             data_start=resolved.data_start,
             train_years=PIPELINE_LIVE.train_years,
+            weekly_label="friday_close",
+            lag_days=3,
         )
         train_cutoff = (today - timedelta(days=8)).isoformat()
         logger.info("  训练完成, train_cutoff=%s", train_cutoff)
     else:
-        cache_path = PIPELINE_LIVE.signal_cache
+        cache_path = PIPELINE_LIVE.signal_cache_weekly_realistic
         if cache_path.exists():
             full_signal = pl.read_parquet(cache_path)
             target_dt = datetime(today.year, today.month, today.day)
@@ -589,6 +591,8 @@ def main() -> None:
                 lab_path=lab_path,
                 data_start=resolved.data_start,
                 train_years=PIPELINE_LIVE.train_years,
+                weekly_label="friday_close",
+                lag_days=3,
             )
             train_cutoff = (today - timedelta(days=8)).isoformat()
 
