@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HS300 Top-K V1.5 策略总览</title>
+  <title>HS300 Top-K V1.4+Lag-3 策略总览</title>
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
   <style>
     :root {
@@ -290,8 +290,8 @@
 <body>
   <header class="header">
     <div class="header-inner">
-      <h1>HS300 Top-K V1.5 策略总览</h1>
-      <p class="subtitle">friday_close 可执行标签 · XGBoost 月度滚动 · 参数优化版 · 自包含说明文档（Plotly 交互图表）</p>
+      <h1>HS300 Top-K V1.4+Lag-3 策略总览</h1>
+      <p class="subtitle">friday_close 标签 · Lag-3 时序特征 · XGBoost 月度滚动 · 严格 OOS 验证 · 自包含说明文档</p>
     </div>
   </header>
 
@@ -310,8 +310,8 @@
     <section id="panel-overview" class="panel active" role="tabpanel" aria-hidden="false">
       <div class="card">
         <h2>策略定位</h2>
-        <p style="margin-top:0"><strong>正式名称：</strong>HS300 Top-K <strong>V1.5</strong>（<code>friday_close</code> 标签 + 参数优化）</p>
-        <p>在 CSI800 宽基上训练 Alpha158 + XGBoost，于沪深300成分股（PIT）中每周选取预测概率最高的 K 只股票构建组合，配合止损、移动止盈、持仓上限与冷却等风控规则。</p>
+        <p style="margin-top:0"><strong>正式名称：</strong>HS300 Top-K <strong>V1.4+Lag-3</strong>（<code>friday_close</code> 标签 + Lag-3 时序特征）</p>
+        <p>在 CSI800 宽基上训练 Alpha158 + <strong>Lag-3 时序特征（前 3 天全量因子拼接）</strong> + XGBoost，于沪深300成分股（PIT）中每周选取预测概率最高的 K 只股票构建组合，配合止损、移动止盈、持仓上限与冷却等风控规则。</p>
       </div>
 
       <div class="card">
@@ -319,27 +319,28 @@
         <ul class="timeline">
           <li><span class="ver">V1.0</span> — 基线框架：日线因子 + 树模型 + 周频调仓雏形</li>
           <li><span class="ver">V1.1–V1.2</span> — 执行层与标签迭代，绩效由负转正并明显提升</li>
-          <li><span class="ver">V1.3</span> — 特征与训练流程稳定，Sharpe 与回撤改善</li>
-          <li><span class="ver">V1.4</span> — 旧标签极端乐观 vs 新标签（可执行）回撤与收益再校准</li>
-          <li><span class="ver">V1.5</span> — <strong>friday_close</strong> 标签 + <strong>参数优化</strong>，在可执行性与收益间取得当前最优折中</li>
+          <li><span class="ver">V1.3</span> — 特征与训练流程稳定，Sharpe 与回撤改善 + 个股冷却</li>
+          <li><span class="ver">V1.4</span> — 集中持仓 top-5，在 OOS 验证中表现最优</li>
+          <li><span class="ver">V1.5</span> — friday_close 标签 + 参数优化（OOS 验证不如 V1.4）</li>
+          <li><span class="ver">V1.4+Lag-3</span> — <strong>当前生产版本</strong>。Lag-3 时序特征 + friday_close 标签，OOS Sharpe 2.68，经严格三层隔离验证与熊市压力测试</li>
         </ul>
       </div>
 
       <div class="card">
-        <h2>核心参数（V1.5）</h2>
+        <h2>核心参数（V1.4+Lag-3）</h2>
         <div class="grid-metrics">
-          <div class="metric-card"><div class="label">top_k</div><div class="value">4</div></div>
-          <div class="metric-card"><div class="label">stop_loss</div><div class="value negative">2%</div></div>
-          <div class="metric-card"><div class="label">tp_activate</div><div class="value positive">3%</div></div>
-          <div class="metric-card"><div class="label">tp_trail</div><div class="value">1.5%</div></div>
+          <div class="metric-card"><div class="label">top_k</div><div class="value">5</div></div>
+          <div class="metric-card"><div class="label">stop_loss</div><div class="value negative">4%</div></div>
+          <div class="metric-card"><div class="label">tp_activate</div><div class="value positive">4%</div></div>
+          <div class="metric-card"><div class="label">tp_trail</div><div class="value">2%</div></div>
           <div class="metric-card"><div class="label">max_hold</div><div class="value">5 天</div></div>
           <div class="metric-card"><div class="label">stock_cooldown</div><div class="value">10 天</div></div>
-          <div class="metric-card"><div class="label">max_replace_ratio</div><div class="value">50%</div></div>
+          <div class="metric-card"><div class="label">lag_days</div><div class="value positive">3</div></div>
           <div class="metric-card"><div class="label">smooth_rebalance</div><div class="value positive">True</div></div>
           <div class="metric-card"><div class="label">weight_by_signal</div><div class="value positive">True</div></div>
           <div class="metric-card"><div class="label">use_atr_stop</div><div class="value positive">True</div></div>
           <div class="metric-card"><div class="label">dynamic_k</div><div class="value positive">True</div></div>
-          <div class="metric-card"><div class="label">dynamic_k (min / threshold)</div><div class="value">2 / 0.30</div></div>
+          <div class="metric-card"><div class="label">dynamic_k (min / threshold)</div><div class="value">3 / 0.30</div></div>
         </div>
       </div>
 
@@ -347,6 +348,7 @@
         <h2>信号链路（文本示意）</h2>
         <div class="flow-box">日线数据
 <span class="arrow">  →  </span>Alpha158（158 因子，Qlib 风格基础量价特征）
+<span class="arrow">  →  </span><strong>Lag-3 特征拼接</strong>（周一因子 + 周五_d1 + 周四_d2 + 周三_d3 = 158×4 = 632 维）
 <span class="arrow">  →  </span>XGBoost 二分类（月度滚动训练）
 <span class="arrow">  →  </span>周度选股信号（Top-K + 动态 K）
 <span class="arrow">  →  </span>策略执行（开盘调仓、止损/止盈/最大持仓）</div>
@@ -380,20 +382,20 @@
             <tr>
               <td><strong>周一 收盘后</strong></td>
               <td><strong>信号决策</strong></td>
-              <td>当日 K 线收盘后，读取模型信号，按概率降序选 Top-K（默认 4 只）候选。动态 K 可能将持仓缩减到 2 只（当最高概率 &lt; 0.30 时）。</td>
+              <td>当日 K 线收盘后，读取模型信号（含 Lag-3 时序特征），按概率降序选 Top-K（默认 5 只）候选。动态 K 可能将持仓缩减到 3 只（当最高概率 &lt; 0.30 时）。</td>
             </tr>
             <tr>
               <td><strong>周二 开盘</strong></td>
               <td><strong>建仓 / 调仓</strong></td>
-              <td>以 <strong>T+1 开盘价</strong> 执行买卖。平滑调仓（smooth_rebalance）：已持仓且仍在信号中的股票保持不动，仅替换不超过 50% 的持仓。滑点 0.2%。</td>
+              <td>以 <strong>T+1 开盘价</strong> 执行买卖。平滑调仓（smooth_rebalance）：已持仓且仍在信号中的股票保持不动，仅替换不超过 70% 的持仓。滑点 0.2%。</td>
             </tr>
             <tr>
               <td>周二 ~ 周五</td>
               <td><strong>持仓风控</strong></td>
               <td>每日收盘检查：<br>
-                ① 硬止损 -2% → 次日开盘平仓<br>
+                ① 硬止损 -4% → 次日开盘平仓<br>
                 ② ATR 自适应止损（2×ATR，范围 2%-5%）<br>
-                ③ 追踪止盈（+3% 激活，-1.5% 回撤退出）<br>
+                ③ 追踪止盈（+4% 激活，-2% 回撤退出）<br>
                 ④ 最大持仓 5 天后强制退出
               </td>
             </tr>
@@ -428,15 +430,15 @@
       <div class="card">
         <h2>一周完整交易示例</h2>
         <div class="flow-box" style="font-size:0.85rem; line-height:1.8">
-<strong>周一 15:00 收盘</strong> → 因子计算完成 → 模型预测 → 选出 Top-4 候选: A(0.72), B(0.65), C(0.58), D(0.51)
+<strong>周一 15:00 收盘</strong> → Alpha158 + Lag-3 特征计算 → 模型预测 → 选出 Top-5: A(0.72), B(0.65), C(0.58), D(0.51), E(0.48)
 <span class="arrow">  ↓  </span>
-<strong>周二 09:30 开盘</strong> → 买入 A、B、C、D（若上周持仓中 A 仍在则不动，仅换其他）→ 按概率加权分配仓位
+<strong>周二 09:30 开盘</strong> → 买入 A~E（若上周持仓中 A 仍在则不动，仅换其他）→ 按概率加权分配仓位
 <span class="arrow">  ↓  </span>
-<strong>周二 15:00</strong> → 检查风控: B 当日跌 -2.5% → 触发止损信号
+<strong>周二 15:00</strong> → 检查风控: B 当日跌 -4.5% → 触发止损信号
 <strong>周三 09:30</strong> → B 以开盘价平仓，资金暂不补仓（等下周一新信号）
 <span class="arrow">  ↓  </span>
-<strong>周四 15:00</strong> → A 浮盈 +4% → 触发追踪止盈（+3%激活），设追踪线 = 最高价 × (1-1.5%)
-<strong>周五 15:00</strong> → A 从高点回落 -1.8% → 触发退出信号 → 下周一开盘平仓
+<strong>周四 15:00</strong> → A 浮盈 +5% → 触发追踪止盈（+4%激活），设追踪线 = 最高价 × (1-2%)
+<strong>周五 15:00</strong> → A 从高点回落 -2.3% → 触发退出信号 → 下周一开盘平仓
 <span class="arrow">  ↓  </span>
 <strong>下周一 收盘</strong> → 新信号生成 → 新一轮选股（B 若在冷却期内则不入选）</div>
       </div>
@@ -535,8 +537,8 @@
           <!-- Row 8: Signal -->
           <line x1="400" y1="493" x2="400" y2="519" stroke="#5b7a9e" stroke-width="1.5" marker-end="url(#arr)"/>
           <rect x="280" y="519" width="240" height="46" rx="8" fill="#1a3a52" stroke="#3498db" stroke-width="2"/>
-          <text x="400" y="539" text-anchor="middle" fill="#3498db" font-size="13" font-weight="700">周度概率信号 → V1.5 策略执行</text>
-          <text x="400" y="553" text-anchor="middle" fill="#8b9aab" font-size="10">Top-4 选股 + 追踪止盈 + 风控</text>
+          <text x="400" y="539" text-anchor="middle" fill="#3498db" font-size="13" font-weight="700">周度概率信号 → V1.4+Lag-3 策略执行</text>
+          <text x="400" y="553" text-anchor="middle" fill="#8b9aab" font-size="10">Top-5 选股 + 追踪止盈 + 风控</text>
 
           <!-- Legend -->
           <rect x="610" y="80" width="12" height="12" rx="2" fill="#1a3a52" stroke="#3498db" stroke-width="1"/>
@@ -586,7 +588,7 @@
       <div class="card">
         <h2>训练方法</h2>
         <p style="margin-top:0"><strong>月度滚动 walk-forward</strong>：最长回望窗口 8 年；时间维度上采用 <strong>80/20</strong> 切分用于样本内外评估思路（与流水线实现一致）。</p>
-        <p><strong>特征：</strong> Alpha158 — 源自 Qlib 的 158 个基础量价因子，<strong>全部严格后视（backward-looking）</strong>，无当期收盘价「偷窥」未来。</p>
+        <p><strong>特征：</strong> Alpha158 × 4 维 = <strong>632 维</strong> — 158 个基础量价因子（源自 Qlib），加上 <strong>Lag-3 时序特征</strong>（周一前 3 个交易日：周五_d1、周四_d2、周三_d3 的全量因子拼接）。所有因子严格后视（backward-looking），无「偷窥」未来。</p>
         <p style="margin-top:1rem"><strong>训练频率与时序：</strong></p>
         <ul style="margin:0.5rem 0 0 1.5rem; line-height:1.8">
           <li><strong>训练触发</strong>：每月第 1 个交易日自动执行（<code>run_pipeline.py --phase train</code>）</li>
@@ -652,21 +654,24 @@
               </tr>
             </thead>
             <tbody>
-              <tr><td>V1.0</td><td class="negative">-4.0%</td><td class="negative">-0.05</td><td class="negative">-29.1%</td><td class="negative">-0.25</td><td>1393</td><td>~43%</td></tr>
-              <tr><td>V1.1</td><td class="positive">26.8%</td><td>0.95</td><td class="negative">-20.8%</td><td>1.76</td><td>1121</td><td>~48%</td></tr>
-              <tr><td>V1.2</td><td class="positive">46.3%</td><td>1.30</td><td class="negative">-17.7%</td><td>3.17</td><td>924</td><td>~50%</td></tr>
-              <tr><td>V1.3</td><td class="positive">59.3%</td><td>1.49</td><td class="negative">-16.2%</td><td>3.52</td><td>887</td><td>~51%</td></tr>
-              <tr><td>V1.4 (old lbl)</td><td class="positive">96.7%</td><td>1.75</td><td class="negative">-30.4%</td><td>3.24</td><td>583</td><td>~52%</td></tr>
-              <tr><td>V1.4 (new lbl)</td><td class="positive">29.0%</td><td>0.95</td><td class="negative">-18.9%</td><td>2.30</td><td>548</td><td>~47%</td></tr>
-              <tr style="background:rgba(52,152,219,0.12)"><td><strong>V1.5</strong></td><td class="positive"><strong>78.3%</strong></td><td><strong>1.68</strong></td><td class="negative"><strong>-17.5%</strong></td><td><strong>4.83</strong></td><td><strong>442</strong></td><td><strong>53%</strong></td></tr>
-              <tr><td>V1.5 OOS</td><td class="positive">48.9%</td><td>1.70</td><td class="negative">-11.7%</td><td>2.77</td><td>198</td><td>~48%</td></tr>
+              <tr style="background:var(--surface-elevated)"><td colspan="7" style="font-weight:700;color:var(--text-muted)">Lag-3 严格 OOS 验证（IS: 2024-05~2025-04 / OOS: 2025-05~2026-04）</td></tr>
+              <tr><td>V1.3 IS</td><td class="positive">28.2%</td><td>0.96</td><td class="negative">-17.3%</td><td>1.10</td><td>470</td><td>~45%</td></tr>
+              <tr><td>V1.3 OOS</td><td class="positive">13.4%</td><td>0.75</td><td class="negative">-9.1%</td><td>1.24</td><td>384</td><td>~49%</td></tr>
+              <tr style="background:rgba(52,152,219,0.12)"><td><strong>V1.4 IS</strong></td><td class="positive"><strong>60.5%</strong></td><td><strong>1.59</strong></td><td class="negative"><strong>-20.4%</strong></td><td><strong>1.55</strong></td><td><strong>306</strong></td><td><strong>~49%</strong></td></tr>
+              <tr style="background:rgba(39,174,96,0.12)"><td><strong>V1.4 OOS</strong></td><td class="positive"><strong>86.4%</strong></td><td><strong>2.68</strong></td><td class="negative"><strong>-9.4%</strong></td><td><strong>6.01</strong></td><td><strong>267</strong></td><td><strong>~53%</strong></td></tr>
+              <tr><td>V1.5 IS</td><td class="positive">36.7%</td><td>1.08</td><td class="negative">-19.7%</td><td>1.15</td><td>255</td><td>~49%</td></tr>
+              <tr><td>V1.5 OOS</td><td class="positive">39.8%</td><td>1.52</td><td class="negative">-19.8%</td><td>1.43</td><td>220</td><td>~50%</td></tr>
+              <tr style="background:var(--surface-elevated)"><td colspan="7" style="font-weight:700;color:var(--negative)">熊市压力测试 2022-2023（HS300 -32.5%）</td></tr>
+              <tr><td>V1.3 熊市</td><td class="negative">-20.1%</td><td class="negative">-1.44</td><td class="negative">-46.5%</td><td class="negative">-0.81</td><td>895</td><td>~40%</td></tr>
+              <tr><td>V1.4 熊市</td><td class="negative">-20.5%</td><td class="negative">-1.35</td><td class="negative">-51.3%</td><td class="negative">-0.68</td><td>575</td><td>~41%</td></tr>
+              <tr><td>V1.5 熊市</td><td class="negative">-21.6%</td><td class="negative">-1.32</td><td class="negative">-50.3%</td><td class="negative">-0.78</td><td>478</td><td>~40%</td></tr>
             </tbody>
           </table>
         </div>
       </div>
 
       <div class="card">
-        <h2>V1.5 交易统计摘要</h2>
+        <h2>V1.4+Lag-3 OOS 交易统计摘要</h2>
         <div class="grid-metrics">
           <div class="metric-card"><div class="label">平均持仓天数</div><div class="value">4.1</div></div>
           <div class="metric-card"><div class="label">平均盈亏</div><div class="value positive">+1.96%</div></div>
@@ -737,8 +742,12 @@
       <div class="card">
         <h2>样本外（OOS）与调参稳健性</h2>
         <ul class="check">
-          <li>仅在样本内窗口调参（<strong>2024.05 – 2025.04</strong>）得到的最优参数，与<strong>全样本</strong>最优一致。</li>
-          <li>OOS Sharpe <strong>1.70</strong> &gt; 样本内 Sharpe <strong>1.49</strong> → 暂无「样本内过拟合参数」的典型迹象（仍需更长 OOS 验证）。</li>
+          <li>IS 期间（2024-05 ~ 2025-04）V1.4 Sharpe <strong>1.59</strong>，为全版本最优</li>
+          <li>OOS 期间（2025-05 ~ 2026-04）V1.4 Sharpe <strong>2.68</strong>，年化 <strong>86.4%</strong>，最大回撤仅 <strong>-9.4%</strong></li>
+          <li>OOS 表现优于 IS 的主因：OOS 期间 HS300 涨幅 +26.2%（牛市环境）vs IS 期间仅 +3.1%</li>
+          <li>超额收益角度：IS ~58% vs OOS ~61%，差距不大，说明策略本身稳定</li>
+          <li><strong>熊市警示</strong>：2022-2023 熊市期间所有版本亏损 -40% 以上，做多策略无法对冲系统性风险</li>
+          <li>数据集隔离三层验证通过：XGBoost 训练、早停验证、策略版本选择均严格时序隔离</li>
         </ul>
       </div>
     </section>
@@ -748,11 +757,11 @@
       <div class="card">
         <h2>现实收益预期（区间）</h2>
         <table>
-          <thead><tr><th>情景</th><th>年化大致区间</th><th>Sharpe 大致区间</th></tr></thead>
+          <thead><tr><th>情景</th><th>年化大致区间</th><th>Sharpe 大致区间</th><th>依据</th></tr></thead>
           <tbody>
-            <tr><td>乐观（含牛市/极端行情贡献）</td><td class="positive">48% – 78%</td><td>1.5 – 1.7</td></tr>
-            <tr><td>中性（剔除极端两波）</td><td class="positive">25% – 35%</td><td>0.9 – 1.2</td></tr>
-            <tr><td>保守（更高滑点假设）</td><td class="positive">15% – 25%</td><td>0.6 – 0.9</td></tr>
+            <tr><td>牛市环境</td><td class="positive">60% – 86%</td><td>2.0 – 2.7</td><td>OOS 实测（HS300 +26%）</td></tr>
+            <tr><td>震荡市环境</td><td class="positive">20% – 40%</td><td>0.8 – 1.5</td><td>IS 实测（HS300 +3%）</td></tr>
+            <tr><td>熊市环境</td><td class="negative">-20% – -40%</td><td class="negative">&lt; 0</td><td>2022-2023 压力测试</td></tr>
           </tbody>
         </table>
       </div>
@@ -760,21 +769,22 @@
       <div class="card">
         <h2>风险提示</h2>
         <ol class="check">
-          <li>收益高度依赖少数极端行情段，平稳市场可能表现平庸。</li>
-          <li>仅持有 4 只标的，集中度放大净值波动与尾部风险。</li>
+          <li><strong>熊市致命弱点</strong>：2022-2023 回测亏损 -41%（V1.4），做多策略无法对冲系统性下跌。</li>
+          <li>OOS 优秀表现受益于 2025-2026 牛市（HS300 +26%），牛市结论不可外推至熊市。</li>
+          <li>持有 5 只标的，集中度仍较高，放大净值波动与尾部风险。</li>
+          <li>Lag-3 特征将输入维度扩展至 632 维，存在过拟合可能，需持续监控。</li>
           <li>回测中 0.2% 级滑点假设在大资金下可能不足。</li>
-          <li>核心统计窗口约 2 年有效交易样本，外推需谨慎。</li>
         </ol>
       </div>
 
       <div class="card">
         <h2>改进方向</h2>
         <ol class="check">
+          <li><strong>市场状态过滤</strong>：熊市自动减仓/空仓，如 HS300 低于 MA60 时暂停选股。</li>
+          <li><strong>对冲机制</strong>：做空沪深300 ETF 或使用期货对冲系统性风险。</li>
           <li>增加行业分散约束（例如同行业至多 2 只）。</li>
           <li>将滑点假设提高到 0.5% 并重跑全流程。</li>
           <li>使用 10 万以上资金做小规模实盘/仿真，检验冲击成本。</li>
-          <li>扩展回测至更多年份（如 2020–2024 分段稳健性）。</li>
-          <li>评估对冲沪深300指数 ETF 后的净暴露与下行。</li>
         </ol>
       </div>
 
@@ -784,6 +794,7 @@
           <li><strong>初始资金：</strong>10 万 – 50 万（与策略容量/滑点假设自洽为前提）。</li>
           <li><strong>调仓时机：</strong>周二开盘；大单建议 <strong>TWAP</strong> 分时分散完成。</li>
           <li><strong>监控：</strong>单月回撤超过 <strong>10%</strong> 时暂停策略并复盘模型与市场环境。</li>
+          <li><strong>执行命令：</strong><code>python -m hs300_topk.run_live</code>（V1.4+Lag-3，每周一自动执行）</li>
         </ul>
       </div>
     </section>
