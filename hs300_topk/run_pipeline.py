@@ -253,6 +253,43 @@ def _compare_results(results: list[tuple[str, dict]], output_dir: Path) -> None:
     print(f"\n  [对比] 详细结果 -> {compare_path}")
 
 
+def generate_ensemble_signals(
+    pipe: PipelineConfig,
+    skip_train: bool,
+    lag_days: int
+) -> pl.DataFrame:
+    """生成双模型融合 (Ensemble) 的预测信号。"""
+    print("\n" + "=" * 60)
+    print("  Phase 2: 加载/训练双模型进行 Ensemble (High Touch + Excess Return)")
+    print("=" * 60)
+    sig_ht = phase_train_or_load(pipe, skip_train=skip_train, weekly_label="high_touch", lag_days=lag_days)
+    sig_ex = phase_train_or_load(pipe, skip_train=skip_train, weekly_label="excess_return", lag_days=lag_days)
+    
+    sig_ht = sig_ht.rename({"signal": "signal_ht"})
+    sig_ex = sig_ex.rename({"signal": "signal_ex"})
+    df = sig_ht.join(sig_ex, on=["datetime", "vt_symbol"], how="inner")
+    
+    lab = get_lab(pipe.lab_path)
+    from hs300_topk.data.loader import load_bar_df
+    bench_df = load_bar_df(lab, ["000300.SSE"], pipe.data_start, pipe.backtest_end)
+    bench_df = bench_df.sort("datetime").with_columns([
+        pl.col("close").rolling_mean(window_size=60).alias("ma60")
+    ])
+    bench_df = bench_df.with_columns([
+        pl.col("close").shift(1).alias("prev_close"),
+        pl.col("ma60").shift(1).alias("prev_ma60")
+    ]).select(["datetime", "prev_close", "prev_ma60"])
+    
+    df = df.join(bench_df, on="datetime", how="left")
+    df = df.with_columns([
+        pl.when(pl.col("prev_close") > pl.col("prev_ma60"))
+        .then(pl.col("signal_ht"))
+        .otherwise(pl.col("signal_ex"))
+        .alias("signal")
+    ])
+    return df.select(["datetime", "vt_symbol", "signal"])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="HS300 Top-K 统一调度脚本")
     parser.add_argument("--force-download", action="store_true",
@@ -330,35 +367,7 @@ def main() -> None:
 
     # Phase 2: 训练
     if args.weekly_label == "ensemble":
-        print("\n" + "=" * 60)
-        print("  Phase 2: 加载/训练双模型进行 Ensemble (High Touch + Excess Return)")
-        print("=" * 60)
-        sig_ht = phase_train_or_load(pipe, skip_train=args.backtest_only, weekly_label="high_touch", lag_days=args.lag_days)
-        sig_ex = phase_train_or_load(pipe, skip_train=args.backtest_only, weekly_label="excess_return", lag_days=args.lag_days)
-        
-        sig_ht = sig_ht.rename({"signal": "signal_ht"})
-        sig_ex = sig_ex.rename({"signal": "signal_ex"})
-        df = sig_ht.join(sig_ex, on=["datetime", "vt_symbol"], how="inner")
-        
-        lab = get_lab(pipe.lab_path)
-        from hs300_topk.data.loader import load_bar_df
-        bench_df = load_bar_df(lab, ["000300.SSE"], pipe.data_start, pipe.backtest_end)
-        bench_df = bench_df.sort("datetime").with_columns([
-            pl.col("close").rolling_mean(window_size=60).alias("ma60")
-        ])
-        bench_df = bench_df.with_columns([
-            pl.col("close").shift(1).alias("prev_close"),
-            pl.col("ma60").shift(1).alias("prev_ma60")
-        ]).select(["datetime", "prev_close", "prev_ma60"])
-        
-        df = df.join(bench_df, on="datetime", how="left")
-        df = df.with_columns([
-            pl.when(pl.col("prev_close") > pl.col("prev_ma60"))
-            .then(pl.col("signal_ht"))
-            .otherwise(pl.col("signal_ex"))
-            .alias("signal")
-        ])
-        signal_df = df.select(["datetime", "vt_symbol", "signal"])
+        signal_df = generate_ensemble_signals(pipe, args.backtest_only, args.lag_days)
     else:
         signal_df = phase_train_or_load(
             pipe,
