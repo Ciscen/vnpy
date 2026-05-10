@@ -1,165 +1,117 @@
-# HS300 Top-K 周度选股策略
+# HS300 Top-K 周度选股策略与量化流水线
 
-基于 vnpy Alpha 框架，使用 **XGBoost 二分类模型** 在 CSI800 (HS300+CSI500) 宇宙上训练，预测股票未来一周上涨概率，生产环境从 HS300 成分股中选出概率最高的 K 只进行等权多头配置。
+基于 vnpy Alpha 框架构建的端到端量化选股与回测流水线。策略使用 **XGBoost 树模型** 结合 **Alpha158 量价因子**，在 CSI800 (沪深300 + 中证500) 宇宙上滚动训练，并在实盘中从沪深300 (HS300) 成分股中选出概率最高的 Top-K 只股票进行等权配置。
 
-> **选股宇宙说明**：训练数据使用 CSI800（约 800 只）以减少幸存者偏差，
-> 实际选股限定在当前 HS300 成分股中（约 300 只）。
+为了彻底消除**幸存者偏差**，数据流严格引入了 BaoStock 的 Point-in-Time (PIT) 历史快照；为避免未来信息泄漏，所有因子和标签严格后视（Backward-looking），并在独立样本外（OOS）窗口进行验证。
 
-## 项目结构
+---
 
-```
+## 🚀 核心策略方案 (V1.4 vs V1.5)
+
+在经历了 2022-2026 年完整的牛熊周期回测与打磨后，项目沉淀了两个核心的生产级版本。详细的版本选型对比请参考：[版本评估与选型文档 (version_selection.md)](docs/version_selection.md)。
+
+### 1. V1.5 Ensemble (全天候稳健基线 - 当前默认)
+这是当前流水线默认推荐运行的版本，完美平衡了防守与进攻。
+- **核心机制 (Double Model Ensemble)**：
+  - 训练两个物理隔离的模型：**Alpha 模型**（预测相对基准的 `excess_return` 超额收益）和 **Beta 模型**（预测绝对收益的 `high_touch` 触及概率）。
+  - **动态 Regime 切换**：通过沪深300指数的 **MA60 均线**作为宏观状态判别器。当大盘处于 MA60 之上（牛市）时使用 Beta 模型获取高弹性；当大盘低于 MA60（熊市）时平滑切换至 Alpha 模型进行防御。
+- **效果表现 (全周期 2022-2026)**：
+  - **年化收益率**：21.81% (总收益 95.07%)
+  - **最大回撤**：-35.62% (在 22-23 年单边熊市中大幅跑赢基准)
+  - **Sharpe 比率**：0.70
+
+### 2. V1.4 + Lag-3 (激进纯多头基线)
+作为纯多头牛市高弹性的标杆，证明了量价动量在上升趋势中的绝对获利能力。
+- **核心特征**：
+  - 在 Alpha158 基础上，拼接入场前 3 天的全量因子（Lag-3），特征维度扩充至 **632 维**。
+  - 使用保守的 `friday_close` 标签（周五收盘相对周二开盘上涨 3%）。
+  - **高集中度**：Top-5 持仓。
+- **效果表现**：在牛市阶段（如 2024.05-2026.04）爆发力极强（年化高达 86.4%，Sharpe 2.68），但在熊市中存在超过 -50% 的单边敞口回撤。
+
+---
+
+## 📂 项目结构与导航
+
+```text
 hs300_topk/
-│   README.md               # 本文件
-│   requirements.txt        # Python 依赖
-│   run_pipeline.py         # 统一调度脚本（推荐入口）
+├── README.md               # 本文档
+├── pipeline_config.py      # 流水线全局配置（日期、资金、路径基准）
+├── run_pipeline.py         # 🚀 统一调度入口（下载 -> 训练 -> 回测 -> 报告）
+├── run_oos_validation.py   # 独立的样本外严格验证测试脚本
 │
-├─ data/                    # 数据层
-│   │   download_data.py    # 独立数据下载脚本 (akshare, 备用)
-│   │   loader.py           # AlphaLab 数据加载封装
+├── docs/                   # 核心文档库
+│   ├── version_selection.md     # V1.4 vs V1.5 版本选型与废弃理由
+│   └── v1.4_series_tuning.md    # 策略演进与网格调参记录
 │
-├─ features/                # 特征工程
-│   │   engineer.py         # HS300Top10Dataset (继承 Alpha158, 158 个因子)
-│   │   labeler.py          # 周度二分类标签生成
+├── data/                   # 数据层
+│   ├── downloader.py       # AKShare下载 + BaoStock PIT 快照补充与回退兜底
+│   └── loader.py           # 数据加载与 AlphaLab 格式转换
 │
-├─ model/                   # 模型层
-│   │   trainer.py          # XgbClassifierModel (XGBoost 二分类)
-│   │   predictor.py        # 信号生成
-│   │   rolling_trainer.py  # 月度滚动训练流水线
+├── features/               # 特征工程层
+│   ├── engineer.py         # 继承 Qlib Alpha158 因子计算与滞后拼接
+│   └── labeler.py          # 周度标签生成 (绝对收益、超额收益等)
 │
-├─ strategy/                # 策略层
-│   │   hs300_topk_strategy.py   # vnpy AlphaStrategy 实现
+├── model/                  # 模型与训练层
+│   ├── rolling_trainer.py  # XGBoost 月度 Walk-Forward 滚动训练
+│   └── predictor.py        # 模型预测与信号持久化
 │
-├─ backtest/                # 回测层
-│   │   run_backtest.py     # 回测入口脚本（不含下载）
-│   │   evaluation.py       # 绩效统计、可视化与报告导出
+├── strategy/               # 策略执行层
+│   ├── config.py           # 各版本超参数定义 (V1.4, V1.4R, V1.5 等)
+│   └── hs300_topk_strategy.py   # VnPy AlphaStrategy 实盘执行逻辑 (风控/调仓)
 │
-├─ output/                  # 回测报告输出（自动生成）
-│   │   statistics.json     # 绩效统计指标
-│   │   daily_pnl.csv       # 逐日盈亏明细
-│   │   trades.csv          # 全部成交记录
-│   │   equity_curve.html   # 权益曲线图
-│   │   daily_pnl_chart.html# 月度盈亏分布图
+├── live/                   # 🔴 实盘与仿真环境
+│   ├── bot.py              # 实盘自动交易机器人
+│   └── feishu.py           # 飞书消息卡片与文档同步模块
 │
-└─ plan/                    # 设计文档
-    │   README.md
-    │   implementation_plan.md
-    │   task.md
+└── output/                 # 📊 回测报告产出目录（运行后生成）
 ```
 
-## 核心参数（V1.5 当前推荐）
+---
 
-| 参数 | 值 | 说明 |
-|------|------|------|
-| 数据区间 | 2016-04-30 ~ 2026-04-30 | 最近 10 年 |
-| 回测区间 | 2024-05-01 ~ 2026-04-30 | 最后 2 年 |
-| 特征基准 | 周一收盘 | Alpha158 因子截止周一 |
-| 入场时机 | 周二开盘 | 周一下单，周二成交 |
-| 标签 | friday_close (+3%) | 周五收盘 >= 周二开盘 x 1.03 |
-| 选股数 | top_k = 4 | 集中持仓 4 只 |
-| 硬止损 | -2% | 持仓亏损达 2% 立即平仓 |
-| 追踪止盈 | +3% 激活, -1.5% 退出 | 浮盈 3% 后追踪，回撤 1.5% 退出 |
-| 强制退出 | 5 个交易日 | 最长持仓周期 |
-| 交易成本 | 0.2% 佣金 + 0.2% 滑点 | 单边合计约 0.4% |
-| 换仓比例 | 50% | 单次最大换仓 50% |
-| 个股冷却 | 10 天 | 止损后 10 天不买同只 |
+## 📈 输出与仪表盘 (Dashboards)
 
-### 绩效概览
+每次执行 `run_pipeline.py` 后，`output/` 目录下会自动生成极具交互性的富文本报告。生成的产出因 `--config` 和 `--weekly-label` 参数不同而放在独立的子目录中（例如 `output/v1.5_ensemble/`）。
 
-| 指标 | 全样本 (24.05-26.04) | OOS (25.05-26.04) | 中性预期 |
-|------|:---:|:---:|:---:|
-| 年化收益 | 78.3% | 48.9% | 25-35% |
-| Sharpe | 1.68 | 1.70 | 0.9-1.2 |
-| 最大回撤 | -17.5% | -11.7% | - |
+核心产物包括：
+- **`dashboard.html` / `strategy_overview.html`**：高度集成的交互式策略仪表盘。内置了：
+  - **基线比对的净值图 (Equity Curve)**：强制与 HS300 基准比对。
+  - **盈亏分布与回撤分析**。
+  - **核心指标表**（年化、Sharpe、胜率、回撤及收益回撤比等）。
+- **`daily_pnl.csv`**：逐日盯市盈亏、手续费、资金曲线数据。
+- **`trades.csv`**：包含每一次开平仓的触发原因（如 `stop_loss`, `trailing_tp`, `max_hold`, `signal_buy`）。
+- **`stock_details/*.html`**：10只高频交易股票的带买卖点标注的 K线图。
 
-> 详细优化过程和审计结论见 `plan/optimization_log.md`
+---
 
-## 快速开始
+## 🛠️ 如何使用 (Usage)
 
-### 1. 安装依赖
+### 1. 运行核心 V1.5 Ensemble 流水线 (包含数据下载、双模型训练、全周期回测)
 
 ```bash
-pip install -r hs300_topk/requirements.txt
+python -m hs300_topk.run_pipeline --config v1.5 --weekly-label ensemble --lag-days 3
 ```
 
-### 2. 一键运行（推荐）
+> **注意**：首次运行会下载接近 900 只股票近 10 年的数据，并从 BaoStock 获取成分股快照，耗时较长。后续运行可加上 `--skip-download` 跳过下载阶段，或利用缓存。
 
+### 2. 常用命令行参数
+
+- `--backtest-only`: 仅执行回测和报告生成，跳过模型训练（直接复用 `lab/hs300/signal/` 下已经跑好的预测信号）。
+- `--oos-validate`: 将回测区间强制定向到独立的样本外时间窗（如 25.05 - 26.04），并将输出目录后缀标记为 `_oos`，用于最终的公平校验。
+- `--force-download`: 忽略本地 Parquet 缓存，强制从网络拉取全量数据。
+
+### 3. 多版本对比测试
+如果你想横向对比 V1.4, V1.4R, V1.5 等多种参数配置：
 ```bash
-python -m hs300_topk.run_pipeline
+python -m hs300_topk.run_pipeline --config compare --weekly-label friday_close
 ```
 
-该命令自动执行完整流水线：
-1. 下载沪深 300 成分股日线数据（自动检查缓存，已有则跳过）
-2. 计算 Alpha158 因子特征 + 周度标签
-3. 逐月滚动训练 XGBoost 模型
-4. 生成信号 -> 策略回测
-5. 输出绩效统计 + 导出报告文件
+---
 
-### 3. 命令行选项
+## 🛡️ 架构与风控规范 (AI Rules)
 
-```bash
-# 强制重新下载全部数据
-python -m hs300_topk.run_pipeline --force-download
+本项目强制遵守极高的量化标准，所有的规范已固化在项目根目录的 `GEMINI.md` 以及 `.cursor/rules/quant_guidelines.mdc` 中：
 
-# 跳过数据下载（使用已有 lab 数据）
-python -m hs300_topk.run_pipeline --skip-download
-
-# 仅回测（使用上次训练的信号缓存）
-python -m hs300_topk.run_pipeline --backtest-only
-```
-
-### 4. 仅运行回测（不含下载）
-
-```bash
-python -m hs300_topk.backtest.run_backtest
-```
-
-## 回测报告
-
-执行完成后，`hs300_topk/output/` 目录下会自动生成：
-
-| 文件 | 内容 |
-|------|------|
-| `statistics.json` | 全部绩效指标（Sharpe、年化收益、最大回撤等） |
-| `daily_pnl.csv` | 逐日盈亏、余额、回撤等明细数据 |
-| `trades.csv` | 每笔成交记录（时间、股票、方向、价格、数量） |
-| `equity_curve.html` | 交互式权益曲线图（Plotly，可缩放） |
-| `daily_pnl_chart.html` | 月度盈亏柱状图 |
-
-## 架构说明
-
-### 信号驱动模式
-
-```
-日线数据 -> Alpha158 因子 -> 周度标签 -> XGBoost 滚动训练 -> 信号 DataFrame
-                                                              |
-                                          BacktestingEngine <- 策略消费信号
-                                                              |
-                                                          绩效统计 + 报告
-```
-
-- **离线阶段**: 模型训练和信号生成在回测前完成
-- **在线阶段**: 策略在 `on_bars()` 中消费预计算信号，执行调仓和风控
-
-### 滚动训练
-
-采用 walk-forward 方法，避免未来信息泄露：
-- 每月初用截止上月底的历史数据训练模型
-- 用该模型预测当月的周一信号
-- 训练窗口最长 8 年
-
-## 自定义参数
-
-策略参数可在 `run_pipeline.py` 的 `phase_backtest()` 中调整：
-
-```python
-setting = {
-    "top_k": 10,            # 选股数量
-    "stop_loss_pct": 0.03,  # 止损幅度
-    "tp_activate_pct": 0.03,# 追踪止盈激活阈值
-    "tp_trail_pct": 0.02,   # 追踪止盈回撤退出
-    "max_hold_days": 4,     # 最大持仓天数
-    "cash_ratio": 0.95,     # 现金使用比例
-}
-```
-
-模型超参数可在 `rolling_trainer.py` 中的 XGBClassifier 初始化处调整。
+1. **零幸存者偏差**：成分股过滤强制依赖于时点（Point-in-Time）快照。
+2. **严禁未来函数**：任何因子和 Label 的预处理必须按时间截断。
+3. **拒绝单边行情测谎**：回测时间轴必须覆盖完整的熊市与牛市。
+4. **拒绝单一分布混淆**：宏观状态应对交给 Ensemble 解决，不滥用单一树模型去处理相互矛盾的目标。
