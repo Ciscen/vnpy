@@ -178,3 +178,203 @@ def generate_weekly_labels_realistic(
     result = pl.concat(all_labels).sort(["datetime", "vt_symbol"])
     result = result.with_columns(pl.col("label").cast(pl.Float64))
     return result
+
+def generate_weekly_labels_excess_return(
+    df: pl.DataFrame,
+    benchmark_symbol: str = "000300.SSE",
+    excess_thresh: float = 0.0,
+) -> pl.DataFrame:
+    """计算周度超额收益标签（V1.5 策略核心）。
+    
+    标签 = 1 if (个股持有期收益 - 基准持有期收益) > excess_thresh else 0
+    """
+    work_df = df.select(["datetime", "vt_symbol", "open", "close"]).sort(
+        ["vt_symbol", "datetime"]
+    )
+    work_df = work_df.with_columns(pl.col("datetime").dt.weekday().alias("weekday"))
+    
+    # 1. 先计算所有 symbol 的周度收益
+    all_rets: list[dict] = []
+    
+    for symbol, grp in work_df.group_by("vt_symbol"):
+        grp = grp.sort("datetime")
+        sym_name = symbol[0] if isinstance(symbol, tuple) else symbol
+        
+        mondays = grp.filter(pl.col("weekday") == 1)
+        if mondays.is_empty():
+            continue
+            
+        dates = grp["datetime"]
+        opens = grp["open"]
+        closes = grp["close"]
+        
+        for monday_dt in mondays["datetime"]:
+            mask = dates > monday_dt
+            future_indices = [i for i, v in enumerate(mask) if v]
+            if not future_indices:
+                continue
+                
+            horizon_end = min(len(future_indices), WEEK_HORIZON)
+            horizon_idx = future_indices[:horizon_end]
+            
+            tuesday_open = opens[horizon_idx[0]]
+            if tuesday_open is None or tuesday_open <= 0:
+                continue
+                
+            last_close = closes[horizon_idx[-1]]
+            if last_close is None or last_close <= 0:
+                continue
+                
+            ret = (last_close / tuesday_open) - 1.0
+            
+            all_rets.append({
+                "datetime": monday_dt,
+                "vt_symbol": sym_name,
+                "ret": ret,
+            })
+            
+    if not all_rets:
+        return pl.DataFrame(
+            schema={"datetime": pl.Datetime, "vt_symbol": pl.Utf8, "label": pl.Float64}
+        )
+        
+    ret_df = pl.DataFrame(all_rets)
+    
+    # 2. 提取基准收益
+    benchmark_df = ret_df.filter(pl.col("vt_symbol") == benchmark_symbol).select(
+        ["datetime", pl.col("ret").alias("bench_ret")]
+    )
+    
+    # 如果不存在基准数据，降级为绝对收益
+    if benchmark_df.is_empty():
+        print(f"  [警告] 未找到基准 {benchmark_symbol} 数据，降级为绝对收益计算超额标签。")
+        ret_df = ret_df.with_columns(pl.lit(0.0).alias("bench_ret"))
+    else:
+        ret_df = ret_df.join(benchmark_df, on="datetime", how="left")
+        # 对于缺失基准收益的周，假设基准收益为 0
+        ret_df = ret_df.with_columns(pl.col("bench_ret").fill_null(0.0))
+        
+    # 3. 计算超额收益并打标
+    # 个股需要排除基准自身（可选，但通常保留也没关系，它总是0超额）
+    ret_df = ret_df.filter(pl.col("vt_symbol") != benchmark_symbol)
+    
+    ret_df = ret_df.with_columns(
+        ((pl.col("ret") - pl.col("bench_ret")) > excess_thresh).cast(pl.Float64).alias("label")
+    )
+    
+    result = ret_df.select(["datetime", "vt_symbol", "label"]).sort(["datetime", "vt_symbol"])
+    return result
+
+def generate_weekly_labels_dynamic(
+    df: pl.DataFrame,
+    benchmark_symbol: str = "000300.SSE",
+    ma_period: int = 40,
+    rise_thresh: float = RISE_THRESH,
+    excess_thresh: float = 0.0,
+) -> pl.DataFrame:
+    """根据大盘 Regime 动态切换打标逻辑。
+    
+    牛市 (基准收盘价 > 基准 MA): 倾向高弹性，用 high_touch
+    熊市 (基准收盘价 <= 基准 MA): 倾向防御，用 excess_return
+    """
+    work_df = df.select(["datetime", "vt_symbol", "open", "high", "close"]).sort(
+        ["vt_symbol", "datetime"]
+    )
+    work_df = work_df.with_columns(pl.col("datetime").dt.weekday().alias("weekday"))
+    
+    # 1. 计算 Benchmark MA
+    bench_df = work_df.filter(pl.col("vt_symbol") == benchmark_symbol).sort("datetime")
+    bench_df = bench_df.with_columns([
+        pl.col("close").rolling_mean(window_size=ma_period).alias("ma"),
+    ])
+    # 将 MA 前移一天，因为决策是在周一，我们用上周五/最近交易日的 regime
+    bench_df = bench_df.with_columns([
+        pl.col("close").shift(1).alias("prev_close"),
+        pl.col("ma").shift(1).alias("prev_ma"),
+    ])
+    # Regime: True = Bull, False = Bear
+    bench_df = bench_df.with_columns(
+        (pl.col("prev_close") > pl.col("prev_ma")).alias("is_bull")
+    )
+    regime_map = dict(zip(bench_df["datetime"].to_list(), bench_df["is_bull"].to_list()))
+    
+    # 2. 计算收益和涨幅
+    all_rets: list[dict] = []
+    for symbol, grp in work_df.group_by("vt_symbol"):
+        grp = grp.sort("datetime")
+        sym_name = symbol[0] if isinstance(symbol, tuple) else symbol
+        
+        mondays = grp.filter(pl.col("weekday") == 1)
+        if mondays.is_empty():
+            continue
+            
+        dates = grp["datetime"]
+        opens = grp["open"]
+        closes = grp["close"]
+        highs = grp["high"]
+        
+        for monday_dt in mondays["datetime"]:
+            mask = dates > monday_dt
+            future_indices = [i for i, v in enumerate(mask) if v]
+            if not future_indices:
+                continue
+                
+            horizon_end = min(len(future_indices), WEEK_HORIZON)
+            horizon_idx = future_indices[:horizon_end]
+            
+            tuesday_open = opens[horizon_idx[0]]
+            if tuesday_open is None or tuesday_open <= 0:
+                continue
+                
+            last_close = closes[horizon_idx[-1]]
+            max_high = max(highs[i] for i in horizon_idx)
+            
+            if last_close is None or last_close <= 0:
+                continue
+                
+            ret = (last_close / tuesday_open) - 1.0
+            high_touch_hit = max_high >= tuesday_open * (1 + rise_thresh)
+            
+            all_rets.append({
+                "datetime": monday_dt,
+                "vt_symbol": sym_name,
+                "ret": ret,
+                "high_touch_hit": high_touch_hit,
+            })
+            
+    if not all_rets:
+        return pl.DataFrame(
+            schema={"datetime": pl.Datetime, "vt_symbol": pl.Utf8, "label": pl.Float64}
+        )
+        
+    ret_df = pl.DataFrame(all_rets)
+    
+    # 3. 提取基准收益
+    benchmark_rets = ret_df.filter(pl.col("vt_symbol") == benchmark_symbol).select(
+        ["datetime", pl.col("ret").alias("bench_ret")]
+    )
+    if benchmark_rets.is_empty():
+        ret_df = ret_df.with_columns(pl.lit(0.0).alias("bench_ret"))
+    else:
+        ret_df = ret_df.join(benchmark_rets, on="datetime", how="left").with_columns(pl.col("bench_ret").fill_null(0.0))
+        
+    # 4. 结合 Regime 计算最终标签
+    ret_df = ret_df.filter(pl.col("vt_symbol") != benchmark_symbol)
+    
+    # 获取每个 monday_dt 的 regime
+    ret_df = ret_df.with_columns([
+        pl.col("datetime").map_elements(lambda dt: regime_map.get(dt, True), return_dtype=pl.Boolean).alias("is_bull")
+    ])
+    
+    # Bull -> high_touch_hit
+    # Bear -> ret - bench_ret > excess_thresh
+    ret_df = ret_df.with_columns(
+        pl.when(pl.col("is_bull"))
+        .then(pl.col("high_touch_hit"))
+        .otherwise((pl.col("ret") - pl.col("bench_ret")) > excess_thresh)
+        .cast(pl.Float64)
+        .alias("label")
+    )
+    
+    result = ret_df.select(["datetime", "vt_symbol", "label"]).sort(["datetime", "vt_symbol"])
+    return result

@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HS300 Top-K V1.5 Ensemble 策略总览</title>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a222c;
+      --surface-elevated: #232d3a;
+      --border: #2d3a4a;
+      --text: #e8ecf1;
+      --text-muted: #8b9aab;
+      --primary: #3498db;
+      --positive: #27ae60;
+      --negative: #e74c3c;
+      --warning: #f39c12;
+      --header-gradient-start: #1a3a52;
+      --header-gradient-end: #0d2137;
+      --radius: 12px;
+      --shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    .header {
+      background: linear-gradient(135deg, var(--header-gradient-start) 0%, var(--header-gradient-end) 100%);
+      padding: 2rem 1.5rem 1.5rem;
+      border-bottom: 1px solid rgba(52, 152, 219, 0.25);
+    }
+
+    .header-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .header h1 {
+      margin: 0 0 0.35rem;
+      font-size: clamp(1.35rem, 4vw, 1.85rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .header .subtitle {
+      color: rgba(232, 236, 241, 0.75);
+      font-size: 0.95rem;
+      max-width: 720px;
+    }
+
+    .tabs-wrap {
+      max-width: 1100px;
+      margin: -0.75rem auto 0;
+      padding: 0 1rem;
+      position: relative;
+      z-index: 2;
+    }
+
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      background: var(--surface);
+      padding: 0.5rem;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+    }
+
+    .tab-btn {
+      flex: 1 1 auto;
+      min-width: 100px;
+      padding: 0.65rem 0.85rem;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .tab-btn:hover {
+      color: var(--text);
+      background: var(--surface-elevated);
+    }
+
+    .tab-btn.active {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 1.25rem 1rem 3rem;
+    }
+
+    .panel {
+      display: none;
+      animation: fadeIn 0.25s ease;
+    }
+
+    .panel.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.35rem;
+      margin-bottom: 1.25rem;
+      box-shadow: var(--shadow);
+    }
+
+    .card h2 {
+      margin: 0 0 0.85rem;
+      font-size: 1.1rem;
+      color: var(--primary);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.5rem;
+    }
+
+    .card h3 {
+      margin: 1rem 0 0.5rem;
+      font-size: 0.95rem;
+      color: var(--text);
+    }
+
+    .grid-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 0.75rem;
+    }
+
+    .metric-card {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+    }
+
+    .metric-card .label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+      margin-bottom: 0.25rem;
+    }
+
+    .metric-card .value {
+      font-size: 1rem;
+      font-weight: 700;
+    }
+
+    .positive { color: var(--positive); }
+    .negative { color: var(--negative); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+
+    th, td {
+      padding: 0.6rem 0.65rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th {
+      background: var(--surface-elevated);
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    tr:hover td {
+      background: rgba(52, 152, 219, 0.06);
+    }
+
+    .timeline {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      border-left: 2px solid var(--border);
+      margin-left: 0.65rem;
+    }
+
+    .timeline li {
+      position: relative;
+      padding: 0.65rem 0 0.65rem 1.35rem;
+    }
+
+    .timeline li::before {
+      content: "";
+      position: absolute;
+      left: -6px;
+      top: 0.9rem;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--primary);
+      border: 2px solid var(--surface);
+    }
+
+    .timeline .ver {
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .flow-box {
+      font-family: "Consolas", "SF Mono", monospace;
+      font-size: 0.78rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.1rem;
+      white-space: pre-wrap;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    .flow-box .arrow {
+      color: var(--primary);
+    }
+
+    .audit-table .status-pass { color: var(--positive); font-weight: 600; }
+    .audit-table .status-warn { color: var(--warning); font-weight: 600; }
+    .audit-table .status-fail { color: var(--negative); font-weight: 600; }
+
+    .chart-container {
+      width: 100%;
+      min-height: 320px;
+      margin-top: 0.75rem;
+    }
+
+    ul.check {
+      margin: 0.5rem 0;
+      padding-left: 1.2rem;
+    }
+
+    ul.check li {
+      margin-bottom: 0.35rem;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      vertical-align: middle;
+    }
+
+    .badge-pos { background: rgba(39, 174, 96, 0.2); color: var(--positive); }
+    .badge-neg { background: rgba(231, 76, 60, 0.2); color: var(--negative); }
+
+    .footnote {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 0.75rem;
+    }
+
+    @media (max-width: 640px) {
+      .tabs { flex-direction: column; }
+      .tab-btn { width: 100%; }
+      th, td { padding: 0.45rem 0.4rem; font-size: 0.75rem; }
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-inner">
+      <h1>HS300 Top-K V1.5 Ensemble 策略总览</h1>
+      <p class="subtitle">friday_close 标签 · Lag-3 时序特征 · XGBoost 月度滚动 · 严格 OOS 验证 · 自包含说明文档</p>
+    </div>
+  </header>
+
+  <div class="tabs-wrap">
+    <nav class="tabs" role="tablist" aria-label="策略文档导航">
+      <button type="button" class="tab-btn active" data-tab="overview" role="tab" aria-selected="true">策略概述</button>
+      <button type="button" class="tab-btn" data-tab="data" role="tab" aria-selected="false">数据体系</button>
+      <button type="button" class="tab-btn" data-tab="backtest" role="tab" aria-selected="false">回测绩效</button>
+      <button type="button" class="tab-btn" data-tab="audit" role="tab" aria-selected="false">统计审计</button>
+      <button type="button" class="tab-btn" data-tab="live" role="tab" aria-selected="false">实盘建议</button>
+    </nav>
+  </div>
+
+  <main class="main">
+    <!-- Tab 1 -->
+    <section id="panel-overview" class="panel active" role="tabpanel" aria-hidden="false">
+      <div class="card">
+        <h2>策略定位</h2>
+        <p style="margin-top:0"><strong>正式名称：</strong>HS300 Top-K <strong>V1.5 Ensemble</strong>（<code>friday_close</code> 标签 + Lag-3 时序特征）</p>
+        <p>在 CSI800 宽基上训练 Alpha158 + <strong>Lag-3 时序特征（前 3 天全量因子拼接）</strong> + XGBoost，于沪深300成分股（PIT）中每周选取预测概率最高的 K 只股票构建组合，配合止损、移动止盈、持仓上限与冷却等风控规则。</p>
+      </div>
+
+      <div class="card">
+        <h2>版本演进时间线</h2>
+        <ul class="timeline">
+          <li><span class="ver">V1.0</span> — 基线框架：日线因子 + 树模型 + 周频调仓雏形</li>
+          <li><span class="ver">V1.1–V1.2</span> — 执行层与标签迭代，绩效由负转正并明显提升</li>
+          <li><span class="ver">V1.3</span> — 特征与训练流程稳定，Sharpe 与回撤改善 + 个股冷却</li>
+          <li><span class="ver">V1.4</span> — 集中持仓 top-5，在 OOS 验证中表现最优</li>
+          <li><span class="ver">V1.5</span> — friday_close 标签 + 参数优化</li>
+          <li><span class="ver">V1.5 Ensemble</span> — <strong>全新增强版本</strong>。采用牛市/熊市双模型融合机制，完美平衡高弹性与回撤控制，全天候有效。</li>
+        </ul>
+      </div>
+
+      
+      <div class="card">
+        <h2>V1.5 双模型 Ensemble 机制说明</h2>
+        <p style="margin-top:0">为了解决单一模型在牛熊市中的悖论，V1.5 采用了 <strong>Double Model Ensemble</strong> 架构：</p>
+        <ul class="check">
+          <li><strong>Alpha 模型 (Excess Return)</strong>：预测跑赢基准的概率。在熊市中防御性极强。</li>
+          <li><strong>Beta 模型 (High Touch)</strong>：预测绝对高收益的概率。在牛市中具有极高的弹性。</li>
+        </ul>
+        <p><strong>动态切换：</strong>使用沪深300指数的 MA60 均线作为 Regime 判别器。当大盘处于 MA60 之上时（牛市），预测信号使用 Beta 模型；当大盘低于 MA60 时（熊市），平滑切换至 Alpha 模型。从而实现 <em>熊市抗跌，牛市领涨</em>。</p>
+      </div>
+
+      <div class="card">
+        <h2>核心参数（V1.5 Ensemble）</h2>
+        <div class="grid-metrics">
+          <div class="metric-card"><div class="label">top_k</div><div class="value">5</div></div>
+          <div class="metric-card"><div class="label">stop_loss</div><div class="value negative">4%</div></div>
+          <div class="metric-card"><div class="label">tp_activate</div><div class="value positive">4%</div></div>
+          <div class="metric-card"><div class="label">tp_trail</div><div class="value">2%</div></div>
+          <div class="metric-card"><div class="label">max_hold</div><div class="value">5 天</div></div>
+          <div class="metric-card"><div class="label">stock_cooldown</div><div class="value">10 天</div></div>
+          <div class="metric-card"><div class="label">lag_days</div><div class="value positive">3</div></div>
+          <div class="metric-card"><div class="label">smooth_rebalance</div><div class="value positive">True</div></div>
+          <div class="metric-card"><div class="label">weight_by_signal</div><div class="value positive">True</div></div>
+          <div class="metric-card"><div class="label">use_atr_stop</div><div class="value positive">True</div></div>
+          <div class="metric-card"><div class="label">dynamic_k</div><div class="value positive">True</div></div>
+          <div class="metric-card"><div class="label">dynamic_k (min / threshold)</div><div class="value">3 / 0.30</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>信号链路（文本示意）</h2>
+        <div class="flow-box">日线数据
+<span class="arrow">  →  </span>Alpha158（158 因子，Qlib 风格基础量价特征）
+<span class="arrow">  →  </span><strong>Lag-3 特征拼接</strong>（周一因子 + 周五_d1 + 周四_d2 + 周三_d3 = 158×4 = 632 维）
+<span class="arrow">  →  </span>XGBoost 二分类（月度滚动训练）
+<span class="arrow">  →  </span>周度选股信号（Top-K + 动态 K）
+<span class="arrow">  →  </span>策略执行（开盘调仓、止损/止盈/最大持仓）</div>
+      </div>
+
+      <div class="card">
+        <h2>训练与交易时间线</h2>
+        <p style="margin-top:0; margin-bottom:1rem; color:var(--text-muted);">以下展示一个完整周期内，模型训练、信号生成、建仓、持仓风控和退出的具体时点。</p>
+        <table>
+          <thead>
+            <tr><th style="width:120px">时间</th><th>事件</th><th>说明</th></tr>
+          </thead>
+          <tbody>
+            <tr style="background:var(--surface-elevated)">
+              <td colspan="3" style="font-weight:700;color:var(--primary)">▎模型训练阶段（每月初自动执行）</td>
+            </tr>
+            <tr>
+              <td>每月第 1 个交易日</td>
+              <td><strong>滚动训练</strong></td>
+              <td>使用截至上月底的全部历史数据（最长 8 年窗口），在 CSI800 宇宙上训练 XGBoost 模型。训练约 2-3 分钟。</td>
+            </tr>
+            <tr>
+              <td>训练完成后</td>
+              <td><strong>生成当月信号</strong></td>
+              <td>用新模型对当月每个周一的 Alpha158 因子做预测，输出每只股票的上涨概率。</td>
+            </tr>
+
+            <tr style="background:var(--surface-elevated)">
+              <td colspan="3" style="font-weight:700;color:var(--positive)">▎每周交易周期</td>
+            </tr>
+            <tr>
+              <td><strong>周一 收盘后</strong></td>
+              <td><strong>信号决策</strong></td>
+              <td>当日 K 线收盘后，读取模型信号（含 Lag-3 时序特征），按概率降序选 Top-K（默认 5 只）候选。动态 K 可能将持仓缩减到 3 只（当最高概率 &lt; 0.30 时）。</td>
+            </tr>
+            <tr>
+              <td><strong>周二 开盘</strong></td>
+              <td><strong>建仓 / 调仓</strong></td>
+              <td>以 <strong>T+1 开盘价</strong> 执行买卖。平滑调仓（smooth_rebalance）：已持仓且仍在信号中的股票保持不动，仅替换不超过 70% 的持仓。滑点 0.2%。</td>
+            </tr>
+            <tr>
+              <td>周二 ~ 周五</td>
+              <td><strong>持仓风控</strong></td>
+              <td>每日收盘检查：<br>
+                ① 硬止损 -4% → 次日开盘平仓<br>
+                ② ATR 自适应止损（2×ATR，范围 2%-5%）<br>
+                ③ 追踪止盈（+4% 激活，-2% 回撤退出）<br>
+                ④ 最大持仓 5 天后强制退出
+              </td>
+            </tr>
+            <tr>
+              <td>持仓 ≤5 天内</td>
+              <td><strong>触发退出</strong></td>
+              <td>止损/止盈信号生成后，次日以开盘价成交退出。个股止损后进入 10 天冷却期，期间不再买入同只。</td>
+            </tr>
+
+            <tr style="background:var(--surface-elevated)">
+              <td colspan="3" style="font-weight:700;color:var(--warning)">▎数据与特征时序保障</td>
+            </tr>
+            <tr>
+              <td>特征截止</td>
+              <td>周一收盘</td>
+              <td>Alpha158 因子仅使用截至周一收盘的历史数据计算，不含当周内的未来数据。</td>
+            </tr>
+            <tr>
+              <td>标签定义</td>
+              <td>周五收盘 vs 周二开盘</td>
+              <td><code>friday_close</code>: 周五收盘价 ≥ 周二开盘价 × 1.03 时 label=1。标签仅用于训练，不影响交易时序。</td>
+            </tr>
+            <tr>
+              <td>训练/预测隔离</td>
+              <td>walk-forward</td>
+              <td>每月模型仅用历史数据训练，预测当月数据 → 严格时序隔离，无未来信息泄漏。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>一周完整交易示例</h2>
+        <div class="flow-box" style="font-size:0.85rem; line-height:1.8">
+<strong>周一 15:00 收盘</strong> → Alpha158 + Lag-3 特征计算 → 模型预测 → 选出 Top-5: A(0.72), B(0.65), C(0.58), D(0.51), E(0.48)
+<span class="arrow">  ↓  </span>
+<strong>周二 09:30 开盘</strong> → 买入 A~E（若上周持仓中 A 仍在则不动，仅换其他）→ 按概率加权分配仓位
+<span class="arrow">  ↓  </span>
+<strong>周二 15:00</strong> → 检查风控: B 当日跌 -4.5% → 触发止损信号
+<strong>周三 09:30</strong> → B 以开盘价平仓，资金暂不补仓（等下周一新信号）
+<span class="arrow">  ↓  </span>
+<strong>周四 15:00</strong> → A 浮盈 +5% → 触发追踪止盈（+4%激活），设追踪线 = 最高价 × (1-2%)
+<strong>周五 15:00</strong> → A 从高点回落 -2.3% → 触发退出信号 → 下周一开盘平仓
+<span class="arrow">  ↓  </span>
+<strong>下周一 收盘</strong> → 新信号生成 → 新一轮选股（B 若在冷却期内则不入选）</div>
+      </div>
+    </section>
+
+    <!-- Tab 2 -->
+    <section id="panel-data" class="panel" role="tabpanel" aria-hidden="true">
+      <div class="card">
+        <h2>数据来源</h2>
+        <ul class="check">
+          <li><strong>akshare</strong>：A 股日线行情（开高低收、成交量等）</li>
+          <li><strong>BaoStock</strong>：历史指数成分股，<strong>逐日 PIT（point-in-time）</strong> 修正，避免未来成分信息泄漏</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>股票池与区间</h2>
+        <div class="grid-metrics">
+          <div class="metric-card"><div class="label">训练域</div><div class="value">CSI800+</div><div class="label" style="margin-top:0.35rem">当前 CSI800 + 历史 HS300 成分补充</div></div>
+          <div class="metric-card"><div class="label">选股域</div><div class="value">PIT HS300</div><div class="label" style="margin-top:0.35rem">每半年更新，约 300 只</div></div>
+          <div class="metric-card"><div class="label">数据区间</div><div class="value">2016-04-30 ~ 2026-04-30</div><div class="label" style="margin-top:0.35rem">约 10 年</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>训练集数据流</h2>
+        <p style="margin-top:0; margin-bottom:1rem; color:var(--text-muted);">从数据获取到信号生成的完整链路，每个环节的数据变换和过滤逻辑。</p>
+        <svg viewBox="0 0 800 580" style="width:100%;max-width:800px;display:block;margin:0 auto">
+          <defs>
+            <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <polygon points="0 0, 8 3, 0 6" fill="#5b7a9e"/>
+            </marker>
+          </defs>
+
+          <!-- Row 1: Data Sources -->
+          <rect x="60" y="10" width="160" height="46" rx="8" fill="#1a3a52" stroke="#3498db" stroke-width="1.5"/>
+          <text x="140" y="30" text-anchor="middle" fill="#e8ecf1" font-size="13" font-weight="600">BaoStock API</text>
+          <text x="140" y="44" text-anchor="middle" fill="#8b9aab" font-size="10">每半年 HS300 成分快照</text>
+
+          <rect x="320" y="10" width="160" height="46" rx="8" fill="#1a3a52" stroke="#3498db" stroke-width="1.5"/>
+          <text x="400" y="30" text-anchor="middle" fill="#e8ecf1" font-size="13" font-weight="600">AKShare</text>
+          <text x="400" y="44" text-anchor="middle" fill="#8b9aab" font-size="10">CSI800+ 日线数据</text>
+
+          <!-- Row 2 -->
+          <line x1="140" y1="56" x2="140" y2="82" stroke="#5b7a9e" stroke-width="1.5" marker-end="url(#arr)"/>
+          <rect x="40" y="82" width="200" height="46" rx="8" fill="#232d3a" stroke="#f39c12" stroke-width="1.5"/>
+          <text x="140" y="102" text-anchor="middle" fill="#f39c12" font-size="13" font-weight="600">PIT 逐日成分索引</text>
+          <text x="140" y="116" text-anchor="middle" fill="#8b9aab" font-size="10">shelve DB: 每天 → 当时成分</text>
+
+          <line x1="400" y1="56" x2="400" y2="82" stroke="#5b7a9e" stroke-width="1.5" marker-end="url(#arr)"/>
+          <rect x="300" y="82" width="200" height="46" rx="8" fill="#232d3a" stroke="#5b7a9e" stroke-width="1.5"/>
+          <text x="400" y="102" text-anchor="middle" fill="#e8ecf1" font-size="13" font-weight="600">日线数据</text>
+          <text x="400" y="116" text-anchor="middle" fill="#8b9aab" font-size="10">~800只 × 10年 × OHLCV</text>
+
+          <!-- Row 3: Feature + Label -->
+          <line x1="400" y1="128" x2="280" y2="162" stroke="#5b7a9e" stroke-width="1.5" marker-end="url(#arr)"/>
+          <line x1="400" y1="128" x2="520" y2="162" stroke="#5b7a9e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+          <rect x="160" y="162" width="240" height="46" rx="8" fill="#232d3a" stroke="#5b7a9e" stroke-width="1.5"/>
+          <text x="280" y="182" text-anchor="middle" fill="#e8ecf1" font-size="13" font-weight="600">Alpha158 因子计算</text>
+          <text x="280" y="196" text-anchor="middle" fill="#8b9aab" font-size="10">158 个量价因子（动量/波动/均线/成交量）</text>
+
+          <rect x="420" y="162" width="200" height="46" rx="8" fill="#232d3a" stroke="#5b7a9e" stroke-width="1.5"/>
+          <text x="520" y="182" text-anchor="middle" fill="#e8ecf1" font-size="13" font-weight="600">标签生成</text>
+          <text x="520" y="196" text-anchor="middle" fill="#8b9aab" font-size="10">friday_close: 周五收盘≥周二开盘×1.03</text>
+
+          <!-- Row 4: Feature Matrix -->
+          <line x1="280" y1="208" x2="360" y2="242" stroke="#5b7a9e" stroke-width="1.5" marker-end="url(#arr)"/>
+          <line x1="520" y1="208" x2="440" y2="242" stroke="#5b7a9e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+          <rect x="280" y="242" width="240" height="46" rx="8" fill="#232d3a" stroke="#5b7a9e" stroke-width="1.5"/>
+          <text x="400" y="262" text-anchor="middle" fill="#e8ecf1" font-size="13" font-weight="600">特征矩阵 合并</text>
+          <text x="400" y="276" text-anchor="middle" fill="#8b9aab" font-size="10">日期 × 股票 × 158因子 + label</text>
+
+          <!-- Row 5: PIT Filter (KEY STEP) -->
+          <line x1="140" y1="128" x2="140" y2="310" stroke="#f39c12" stroke-width="1.5" stroke-dasharray="6,3"/>
+          <line x1="140" y1="310" x2="320" y2="310" stroke="#f39c12" stroke-width="1.5" marker-end="url(#arr)"/>
+          <line x1="400" y1="288" x2="400" y2="295" stroke="#5b7a9e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+          <rect x="280" y="295" width="240" height="54" rx="8" fill="#2a1a10" stroke="#f39c12" stroke-width="2"/>
+          <text x="400" y="316" text-anchor="middle" fill="#f39c12" font-size="13" font-weight="700">PIT 成分过滤</text>
+          <text x="400" y="332" text-anchor="middle" fill="#8b9aab" font-size="10">只保留「当时在 HS300」的数据行</text>
+
+          <!-- Row 6: Train Data -->
+          <line x1="400" y1="349" x2="400" y2="375" stroke="#5b7a9e" stroke-width="1.5" marker-end="url(#arr)"/>
+          <rect x="280" y="375" width="240" height="46" rx="8" fill="#232d3a" stroke="#27ae60" stroke-width="1.5"/>
+          <text x="400" y="395" text-anchor="middle" fill="#27ae60" font-size="13" font-weight="600">训练数据</text>
+          <text x="400" y="409" text-anchor="middle" fill="#8b9aab" font-size="10">截至上月底的时序隔离样本</text>
+
+          <!-- Row 7: XGBoost -->
+          <line x1="400" y1="421" x2="400" y2="447" stroke="#5b7a9e" stroke-width="1.5" marker-end="url(#arr)"/>
+          <rect x="300" y="447" width="200" height="46" rx="8" fill="#232d3a" stroke="#27ae60" stroke-width="1.5"/>
+          <text x="400" y="467" text-anchor="middle" fill="#e8ecf1" font-size="13" font-weight="600">XGBoost 月度训练</text>
+          <text x="400" y="481" text-anchor="middle" fill="#8b9aab" font-size="10">walk-forward，最长8年窗口</text>
+
+          <!-- Row 8: Signal -->
+          <line x1="400" y1="493" x2="400" y2="519" stroke="#5b7a9e" stroke-width="1.5" marker-end="url(#arr)"/>
+          <rect x="280" y="519" width="240" height="46" rx="8" fill="#1a3a52" stroke="#3498db" stroke-width="2"/>
+          <text x="400" y="539" text-anchor="middle" fill="#3498db" font-size="13" font-weight="700">周度概率信号 → V1.5 Ensemble 策略执行</text>
+          <text x="400" y="553" text-anchor="middle" fill="#8b9aab" font-size="10">Top-5 选股 + 追踪止盈 + 风控</text>
+
+          <!-- Legend -->
+          <rect x="610" y="80" width="12" height="12" rx="2" fill="#1a3a52" stroke="#3498db" stroke-width="1"/>
+          <text x="628" y="91" fill="#8b9aab" font-size="10">数据源 / 信号输出</text>
+          <rect x="610" y="100" width="12" height="12" rx="2" fill="#2a1a10" stroke="#f39c12" stroke-width="1"/>
+          <text x="628" y="111" fill="#8b9aab" font-size="10">PIT 过滤（关键步骤）</text>
+          <rect x="610" y="120" width="12" height="12" rx="2" fill="#232d3a" stroke="#27ae60" stroke-width="1"/>
+          <text x="628" y="131" fill="#8b9aab" font-size="10">训练环节</text>
+          <rect x="610" y="140" width="12" height="12" rx="2" fill="#232d3a" stroke="#5b7a9e" stroke-width="1"/>
+          <text x="628" y="151" fill="#8b9aab" font-size="10">数据处理</text>
+        </svg>
+      </div>
+
+      <div class="card">
+        <h2>PIT 成分过滤原理</h2>
+        <p style="margin-top:0">为什么需要 PIT 过滤：如果用「今天的 HS300 成分」训练历史模型，那些过去表现差、被踢出指数的股票不会出现在训练集，模型看到的全是"赢家"——这就是<strong>幸存者偏差</strong>。</p>
+        <table>
+          <thead>
+            <tr><th style="width:80px">步骤</th><th>操作</th><th>效果</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Step 1</strong></td>
+              <td>BaoStock <code>query_hs300_stocks</code> 获取 2016-2026 每半年的成分快照（共约 20 个时间点）</td>
+              <td>知道每个历史时间点 HS300 里有哪 300 只股票</td>
+            </tr>
+            <tr>
+              <td><strong>Step 2</strong></td>
+              <td>将快照展开为逐日 shelve 数据库：每天映射到最近一次调整的成分列表</td>
+              <td>任意日期都能查到「当时的」成分股</td>
+            </tr>
+            <tr>
+              <td><strong>Step 3</strong></td>
+              <td><code>load_component_filters</code> 生成每只股票的「在指数中」时间区间列表</td>
+              <td>例如：茅台 2016-01 ~ 2026-04 全程在；某退市股 2016-01 ~ 2019-06</td>
+            </tr>
+            <tr>
+              <td><strong>Step 4</strong></td>
+              <td><code>prepare_data(filters)</code> 只保留区间内的特征行</td>
+              <td>模型在每个时间点只能看到当时真实的成分，不知道未来谁会进出</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="footnote">数据完整性保障：下载阶段除了当前 CSI800 外，还通过 BaoStock 历史快照补充下载所有曾在 HS300 但已不在 CSI800 的股票数据，确保 PIT 过滤时不会因数据缺失而丢掉样本。</p>
+      </div>
+
+      <div class="card">
+        <h2>训练方法</h2>
+        <p style="margin-top:0"><strong>月度滚动 walk-forward</strong>：最长回望窗口 8 年；时间维度上采用 <strong>80/20</strong> 切分用于样本内外评估思路（与流水线实现一致）。</p>
+        <p><strong>特征：</strong> Alpha158 × 4 维 = <strong>632 维</strong> — 158 个基础量价因子（源自 Qlib），加上 <strong>Lag-3 时序特征</strong>（周一前 3 个交易日：周五_d1、周四_d2、周三_d3 的全量因子拼接）。所有因子严格后视（backward-looking），无「偷窥」未来。</p>
+        <p style="margin-top:1rem"><strong>训练频率与时序：</strong></p>
+        <ul style="margin:0.5rem 0 0 1.5rem; line-height:1.8">
+          <li><strong>训练触发</strong>：每月第 1 个交易日自动执行（<code>run_pipeline.py --phase train</code>）</li>
+          <li><strong>训练窗口</strong>：截至上月最后一个交易日的全部历史数据（最长 8 年滑动窗口）</li>
+          <li><strong>训练宇宙</strong>：当前 CSI800 + 历史 HS300 成分补充，确保所有曾入选 HS300 的股票都有数据（消除数据缺失导致的幸存者偏差）</li>
+          <li><strong>模型产出</strong>：当月的 XGBoost 模型文件，用于预测当月每个周一收盘后的周度信号</li>
+          <li><strong>隔离机制</strong>：训练集与预测集在时间上严格分离 → 训练数据截止上月底，预测数据从本月开始</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>标签定义对比</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>标签</th>
+              <th>规则要点</th>
+              <th>性质</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>high_touch</code></td>
+              <td>周内最高价触及 <code>tuesday_open × 1.05</code></td>
+              <td><span class="badge badge-neg">乐观</span> 路径依赖，实盘难以等价执行</td>
+            </tr>
+            <tr>
+              <td><code>friday_close</code>（V1.5）</td>
+              <td>周五收盘 ≥ <code>tuesday_open × 1.03</code></td>
+              <td><span class="badge badge-pos">保守</span> 可挂单/收盘附近评估，更可执行</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>模型超参（XGBoost）</h2>
+        <div class="grid-metrics">
+          <div class="metric-card"><div class="label">类型</div><div class="value">二分类</div></div>
+          <div class="metric-card"><div class="label">n_estimators</div><div class="value">500</div></div>
+          <div class="metric-card"><div class="label">max_depth</div><div class="value">6</div></div>
+          <div class="metric-card"><div class="label">learning_rate</div><div class="value">0.05</div></div>
+          <div class="metric-card"><div class="label">subsample</div><div class="value">0.8</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 3 -->
+    <section id="panel-backtest" class="panel" role="tabpanel" aria-hidden="true">
+      <div class="card">
+        <h2>全版本回测绩效对比</h2>
+        <div style="overflow-x:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Version</th>
+                <th>年化</th>
+                <th>Sharpe</th>
+                <th>最大回撤</th>
+                <th>收益回撤比</th>
+                <th>交易笔数</th>
+                <th>胜率</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style="background:var(--surface-elevated)"><td colspan="7" style="font-weight:700;color:var(--text-muted)">Lag-3 严格 OOS 验证（IS: 2024-05~2025-04 / OOS: 2025-05~2026-04）</td></tr>
+              <tr><td>V1.3 IS</td><td class="positive">28.2%</td><td>0.96</td><td class="negative">-17.3%</td><td>1.10</td><td>470</td><td>~45%</td></tr>
+              <tr><td>V1.3 OOS</td><td class="positive">13.4%</td><td>0.75</td><td class="negative">-9.1%</td><td>1.24</td><td>384</td><td>~49%</td></tr>
+              <tr style="background:rgba(52,152,219,0.12)"><td><strong>V1.4 IS</strong></td><td class="positive"><strong>60.5%</strong></td><td><strong>1.59</strong></td><td class="negative"><strong>-20.4%</strong></td><td><strong>1.55</strong></td><td><strong>306</strong></td><td><strong>~49%</strong></td></tr>
+              <tr style="background:rgba(39,174,96,0.12)"><td><strong>V1.4 OOS</strong></td><td class="positive"><strong>86.4%</strong></td><td><strong>2.68</strong></td><td class="negative"><strong>-9.4%</strong></td><td><strong>6.01</strong></td><td><strong>267</strong></td><td><strong>~53%</strong></td></tr>
+              <tr><td>V1.5 IS</td><td class="positive">36.7%</td><td>1.08</td><td class="negative">-19.7%</td><td>1.15</td><td>255</td><td>~49%</td></tr>
+              <tr><td>V1.5 OOS</td><td class="positive">39.8%</td><td>1.52</td><td class="negative">-19.8%</td><td>1.43</td><td>220</td><td>~50%</td></tr>
+              <tr style="background:rgba(39,174,96,0.12)"><td><strong>V1.5 Ensemble OOS (Bull)</strong></td><td class="positive"><strong>64.6%</strong></td><td><strong>1.40</strong></td><td class="negative"><strong>-18.5%</strong></td><td><strong>3.43</strong></td><td><strong>479</strong></td><td><strong>~45%</strong></td></tr>
+              <tr style="background:var(--surface-elevated)"><td colspan="7" style="font-weight:700;color:var(--negative)">熊市压力测试 2022-2023（HS300 -32.5%）</td></tr>
+              <tr><td>V1.3 熊市</td><td class="negative">-20.1%</td><td class="negative">-1.44</td><td class="negative">-46.5%</td><td class="negative">-0.81</td><td>895</td><td>~40%</td></tr>
+              <tr><td>V1.4 熊市</td><td class="negative">-20.5%</td><td class="negative">-1.35</td><td class="negative">-51.3%</td><td class="negative">-0.68</td><td>575</td><td>~41%</td></tr>
+              <tr><td>V1.5 熊市</td><td class="negative">-21.6%</td><td class="negative">-1.32</td><td class="negative">-50.3%</td><td class="negative">-0.78</td><td>478</td><td>~40%</td></tr>
+              <tr style="background:rgba(52,152,219,0.12)"><td><strong>V1.5 Ensemble 熊市</strong></td><td class="negative"><strong>-13.5%</strong></td><td class="negative"><strong>-0.78</strong></td><td class="negative"><strong>-32.2%</strong></td><td class="negative"><strong>-0.82</strong></td><td><strong>548</strong></td><td><strong>~42%</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>V1.5 Ensemble OOS 交易统计摘要</h2>
+        <div class="grid-metrics">
+          <div class="metric-card"><div class="label">平均持仓天数</div><div class="value">4.1</div></div>
+          <div class="metric-card"><div class="label">平均盈亏</div><div class="value positive">+1.96%</div></div>
+          <div class="metric-card"><div class="label">中位数盈亏</div><div class="value positive">+0.33%</div></div>
+          <div class="metric-card"><div class="label">盈利交易均值</div><div class="value positive">+7.76%</div></div>
+          <div class="metric-card"><div class="label">亏损交易均值</div><div class="value negative">-4.56%</div></div>
+          <div class="metric-card"><div class="label">最大单笔盈利</div><div class="value positive">+84.64%</div></div>
+          <div class="metric-card"><div class="label">最大单笔亏损</div><div class="value negative">-10.35%</div></div>
+        </div>
+        <h3>平仓原因分布</h3>
+        <table>
+          <thead><tr><th>原因</th><th>占比</th></tr></thead>
+          <tbody>
+            <tr><td>max_hold（持仓到期）</td><td>41.1%</td></tr>
+            <tr><td>trailing_tp（移动止盈）</td><td>28.8%</td></tr>
+            <tr><td>stop_loss（止损）</td><td>26.0%</td></tr>
+            <tr><td>rebalance（再平衡）</td><td>4.1%</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>图表：各版本年化收益</h2>
+        <div id="chart-annual" class="chart-container"></div>
+      </div>
+      <div class="card">
+        <h2>图表：各版本 Sharpe</h2>
+        <div id="chart-sharpe" class="chart-container"></div>
+      </div>
+      <div class="card">
+        <h2>图表：胜率 vs 败率（按笔数近似 stacked）</h2>
+        <p class="footnote" style="margin-top:0">败率 = 100% − 表中所列胜率（~表示近似值）。</p>
+        <div id="chart-winloss" class="chart-container"></div>
+      </div>
+    </section>
+
+    <!-- Tab 4 -->
+    <section id="panel-audit" class="panel" role="tabpanel" aria-hidden="true">
+      <div class="card">
+        <h2>审计清单（10 项）</h2>
+        <table class="audit-table">
+          <thead><tr><th>#</th><th>项目</th><th>结论</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>Look-Ahead Bias</td><td class="status-pass">✅ Alpha158 全部回溯型</td></tr>
+            <tr><td>2</td><td>Survivorship Bias</td><td class="status-pass">✅ BaoStock PIT 修正</td></tr>
+            <tr><td>3</td><td>Overfitting</td><td class="status-warn">⚠️ 500 trees / depth=6 偏 aggressive</td></tr>
+            <tr><td>4</td><td>交易成本</td><td class="status-warn">⚠️ 双边 0.4% 合理偏低</td></tr>
+            <tr><td>5</td><td>Data Snooping</td><td class="status-warn">⚠️ 多版本同期调参</td></tr>
+            <tr><td>6</td><td>Selection Bias</td><td class="status-warn">⚠️ 仅展示最优版本</td></tr>
+            <tr><td>7</td><td>仓位集中</td><td class="status-fail">❌ top_k=4，71% 盈亏来自 6 笔</td></tr>
+            <tr><td>8</td><td>回测引擎</td><td class="status-pass">✅ P0+P1 已修复</td></tr>
+            <tr><td>9</td><td>标签定义</td><td class="status-pass">✅ friday_close 可执行</td></tr>
+            <tr><td>10</td><td>信号时序</td><td class="status-pass">✅ T 日收盘 → T+1 开盘</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>收益集中度分析</h2>
+        <ul class="check">
+          <li><strong>2024 国庆行情：</strong>约占总盈亏的 <span class="positive">25.1%</span></li>
+          <li><strong>2025 夏季行情：</strong>约占 <span class="positive">36.9%</span></li>
+          <li><strong>其余区间：</strong>约占 <span class="positive">37.9%</span></li>
+        </ul>
+        <p><strong>解读：</strong>去掉上述两波极端行情后，年化由标称 <strong>78.3%</strong> 降至约 <strong>30%</strong> — 绩效对少数强势阶段依赖显著。</p>
+      </div>
+
+      <div class="card">
+        <h2>样本外（OOS）与调参稳健性</h2>
+        <ul class="check">
+          <li>IS 期间（2024-05 ~ 2025-04）V1.4 Sharpe <strong>1.59</strong>，为全版本最优</li>
+          <li>OOS 期间（2025-05 ~ 2026-04）V1.4 Sharpe <strong>2.68</strong>，年化 <strong>86.4%</strong>，最大回撤仅 <strong>-9.4%</strong></li>
+          <li>OOS 表现优于 IS 的主因：OOS 期间 HS300 涨幅 +26.2%（牛市环境）vs IS 期间仅 +3.1%</li>
+          <li>超额收益角度：IS ~58% vs OOS ~61%，差距不大，说明策略本身稳定</li>
+          <li><strong>熊市警示</strong>：2022-2023 熊市期间所有版本亏损 -40% 以上，做多策略无法对冲系统性风险</li>
+          <li>数据集隔离三层验证通过：XGBoost 训练、早停验证、策略版本选择均严格时序隔离</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Tab 5 -->
+    <section id="panel-live" class="panel" role="tabpanel" aria-hidden="true">
+      <div class="card">
+        <h2>现实收益预期（区间）</h2>
+        <table>
+          <thead><tr><th>情景</th><th>年化大致区间</th><th>Sharpe 大致区间</th><th>依据</th></tr></thead>
+          <tbody>
+            <tr><td>牛市环境</td><td class="positive">60% – 86%</td><td>2.0 – 2.7</td><td>OOS 实测（HS300 +26%）</td></tr>
+            <tr><td>震荡市环境</td><td class="positive">20% – 40%</td><td>0.8 – 1.5</td><td>IS 实测（HS300 +3%）</td></tr>
+            <tr><td>熊市环境</td><td class="negative">-20% – -40%</td><td class="negative">&lt; 0</td><td>2022-2023 压力测试</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>风险提示</h2>
+        <ol class="check">
+          <li><strong>熊市致命弱点</strong>：2022-2023 回测亏损 -41%（V1.4），做多策略无法对冲系统性下跌。</li>
+          <li>OOS 优秀表现受益于 2025-2026 牛市（HS300 +26%），牛市结论不可外推至熊市。</li>
+          <li>持有 5 只标的，集中度仍较高，放大净值波动与尾部风险。</li>
+          <li>Lag-3 特征将输入维度扩展至 632 维，存在过拟合可能，需持续监控。</li>
+          <li>回测中 0.2% 级滑点假设在大资金下可能不足。</li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <h2>改进方向</h2>
+        <ol class="check">
+          <li><strong>市场状态过滤</strong>：熊市自动减仓/空仓，如 HS300 低于 MA60 时暂停选股。</li>
+          <li><strong>对冲机制</strong>：做空沪深300 ETF 或使用期货对冲系统性风险。</li>
+          <li>增加行业分散约束（例如同行业至多 2 只）。</li>
+          <li>将滑点假设提高到 0.5% 并重跑全流程。</li>
+          <li>使用 10 万以上资金做小规模实盘/仿真，检验冲击成本。</li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <h2>执行建议</h2>
+        <ul class="check">
+          <li><strong>初始资金：</strong>10 万 – 50 万（与策略容量/滑点假设自洽为前提）。</li>
+          <li><strong>调仓时机：</strong>周二开盘；大单建议 <strong>TWAP</strong> 分时分散完成。</li>
+          <li><strong>监控：</strong>单月回撤超过 <strong>10%</strong> 时暂停策略并复盘模型与市场环境。</li>
+          <li><strong>执行命令：</strong><code>python -m hs300_topk.run_live</code>（V1.5 Ensemble，每周一自动执行）</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      var tabs = document.querySelectorAll('.tab-btn');
+      var panels = document.querySelectorAll('.panel');
+
+      function activate(id) {
+        tabs.forEach(function (btn) {
+          var on = btn.getAttribute('data-tab') === id;
+          btn.classList.toggle('active', on);
+          btn.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        panels.forEach(function (p) {
+          var on = p.id === 'panel-' + id;
+          p.classList.toggle('active', on);
+          p.setAttribute('aria-hidden', on ? 'false' : 'true');
+        });
+      }
+
+      tabs.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          activate(btn.getAttribute('data-tab'));
+          if (btn.getAttribute('data-tab') === 'backtest') {
+            renderCharts();
+          }
+        });
+      });
+
+      var chartDone = false;
+      function renderCharts() {
+        if (chartDone || typeof Plotly === 'undefined') return;
+        chartDone = true;
+
+        var versions = ['V1.0', 'V1.1', 'V1.2', 'V1.3', 'V1.4(old)', 'V1.4(new)', 'V1.5', 'V1.5 OOS'];
+        var annual = [-4.0, 26.8, 46.3, 59.3, 96.7, 29.0, 78.3, 48.9];
+        var sharpes = [-0.05, 0.95, 1.30, 1.49, 1.75, 0.95, 1.68, 1.70];
+        var winRates = [43, 48, 50, 51, 52, 47, 53, 48];
+        var lossRates = winRates.map(function (w) { return 100 - w; });
+
+        var colorsAnnual = annual.map(function (v, i) {
+          if (i === 6) return '#3498db';
+          return v >= 0 ? '#27ae60' : '#e74c3c';
+        });
+
+        var layoutBase = {
+          paper_bgcolor: '#1a222c',
+          plot_bgcolor: '#0f1419',
+          font: { color: '#e8ecf1', family: 'Segoe UI, PingFang SC, Microsoft YaHei, sans-serif' },
+          margin: { t: 40, r: 20, b: 80, l: 50 },
+          xaxis: {
+            tickangle: -35,
+            gridcolor: '#2d3a4a',
+            linecolor: '#2d3a4a',
+            tickfont: { size: 11 }
+          },
+          yaxis: {
+            gridcolor: '#2d3a4a',
+            linecolor: '#2d3a4a',
+            zeroline: true,
+            zerolinecolor: '#8b9aab'
+          },
+          showlegend: false
+        };
+
+        Plotly.newPlot('chart-annual', [{
+          type: 'bar',
+          x: versions,
+          y: annual,
+          marker: { color: colorsAnnual, line: { width: 0 } },
+          text: annual.map(function (v) { return v + '%'; }),
+          textposition: 'outside',
+          hovertemplate: '%{x}<br>年化: %{y:.1f}%<extra></extra>'
+        }], Object.assign({}, layoutBase, {
+          title: { text: '年化收益率对比（%）', font: { size: 15, color: '#3498db' } },
+          yaxis: Object.assign({}, layoutBase.yaxis, { title: '年化 %' })
+        }), { responsive: true, displayModeBar: true });
+
+        var sharpeColors = sharpes.map(function (s, i) {
+          if (i === 6) return '#3498db';
+          return s >= 0 ? '#27ae60' : '#e74c3c';
+        });
+
+        Plotly.newPlot('chart-sharpe', [{
+          type: 'bar',
+          x: versions,
+          y: sharpes,
+          marker: { color: sharpeColors },
+          text: sharpes.map(function (s) { return s.toFixed(2); }),
+          textposition: 'outside',
+          hovertemplate: '%{x}<br>Sharpe: %{y:.2f}<extra></extra>'
+        }], Object.assign({}, layoutBase, {
+          title: { text: 'Sharpe 比率对比', font: { size: 15, color: '#3498db' } },
+          yaxis: Object.assign({}, layoutBase.yaxis, { title: 'Sharpe' })
+        }), { responsive: true });
+
+        Plotly.newPlot('chart-winloss', [
+          {
+            type: 'bar',
+            name: '胜率',
+            x: versions,
+            y: winRates,
+            marker: { color: '#27ae60' },
+            hovertemplate: '%{x}<br>胜率: %{y}%<extra></extra>'
+          },
+          {
+            type: 'bar',
+            name: '败率（100−胜率）',
+            x: versions,
+            y: lossRates,
+            marker: { color: '#e74c3c' },
+            hovertemplate: '%{x}<br>败率: %{y}%<extra></extra>'
+          }
+        ], Object.assign({}, layoutBase, {
+          barmode: 'stack',
+          title: { text: '胜率 vs 败率（堆叠，%）', font: { size: 15, color: '#3498db' } },
+          yaxis: Object.assign({}, layoutBase.yaxis, { title: '%', range: [0, 100] }),
+          showlegend: true,
+          legend: { orientation: 'h', y: -0.22, x: 0 }
+        }), { responsive: true });
+      }
+
+      window.addEventListener('load', function () {
+        if (document.getElementById('panel-backtest').classList.contains('active')) {
+          renderCharts();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

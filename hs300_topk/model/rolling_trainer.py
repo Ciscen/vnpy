@@ -33,6 +33,8 @@ from hs300_topk.features.engineer import HS300Top10Dataset
 from hs300_topk.features.labeler import (
     generate_weekly_labels,
     generate_weekly_labels_realistic,
+    generate_weekly_labels_excess_return,
+    generate_weekly_labels_dynamic,
 )
 from hs300_topk.pipeline_config import PIPELINE
 
@@ -124,11 +126,17 @@ def _load_features(
     data_end: str,
     backtest_end: str,
     max_workers: int,
-) -> tuple[pl.DataFrame, list[str]]:
+) -> tuple[pl.DataFrame, pl.DataFrame, list[str]]:
     """加载日线并构建 Alpha158 特征矩阵（Step 1 & 2 公共逻辑）。"""
     lab = get_lab(lab_path)
     vt_symbols = discover_symbols(lab_path)
-    print(f"\n可用股票数: {len(vt_symbols)}")
+    
+    # 确保基准指数被加载以计算超额收益和 Regime 特征
+    index_symbol = "000300.SSE"
+    if index_symbol not in vt_symbols:
+        vt_symbols.append(index_symbol)
+        
+    print(f"\n可用股票数: {len(vt_symbols)} (含基准 {index_symbol})")
 
     print("\n[Step 1/4] 加载日线数据 ...")
     bar_df = load_bar_df(lab, vt_symbols, data_start, data_end, extended_days=100)
@@ -142,9 +150,9 @@ def _load_features(
         test_period=(data_start, backtest_end),
     )
 
-    index_symbol = "HS300.SSE"
+    index_symbol_lab = "HS300.SSE"
     try:
-        filters = lab.load_component_filters(index_symbol, data_start, data_end)
+        filters = lab.load_component_filters(index_symbol_lab, data_start, data_end)
     except Exception:
         filters = None
         print("  [警告] 未找到成分股索引，跳过筛选")
@@ -304,16 +312,39 @@ def rolling_train(
     )
 
     # ── Step 3: 生成周度标签 & 合并 ──
-    print("\n[Step 3/4] 生成周度标签 ...")
+    print(f"\n[Step 3/4] 生成周度标签 ({weekly_label}) ...")
     if weekly_label == "friday_close":
         labels_df = generate_weekly_labels_realistic(bar_df)
+    elif weekly_label == "excess_return":
+        labels_df = generate_weekly_labels_excess_return(bar_df, benchmark_symbol="000300.SSE")
+    elif weekly_label == "dynamic_regime":
+        labels_df = generate_weekly_labels_dynamic(bar_df, benchmark_symbol="000300.SSE")
     else:
         labels_df = generate_weekly_labels(bar_df)
     print(f"  标签总数: {labels_df.shape[0]} (正例率: {labels_df['label'].mean():.2%})")
 
+    # 提取基准作为 Regime 特征
+    bench_symbol = "000300.SSE"
+    bench_features = raw_features.filter(pl.col("vt_symbol") == bench_symbol).drop("vt_symbol")
+    # 选择代表性宏观特征并加前缀
+    regime_cols_to_keep = ["datetime"] + [
+        c for c in bench_features.columns 
+        if c.startswith(("roc_", "std_", "ma_", "beta_"))
+    ]
+    bench_features = bench_features.select(regime_cols_to_keep)
+    bench_features = bench_features.rename({
+        c: f"regime_{c}" for c in bench_features.columns if c != "datetime"
+    })
+
+    # 从主特征中剔除基准本身（不再用于选股）
+    raw_features = raw_features.filter(pl.col("vt_symbol") != bench_symbol)
+
     monday_features = raw_features.with_columns(
         pl.col("datetime").dt.weekday().alias("_weekday")
     ).filter(pl.col("_weekday") == 1).drop("_weekday")
+
+    # 拼接 Regime 特征
+    monday_features = monday_features.join(bench_features, on="datetime", how="left")
 
     monday_with_labels = monday_features.drop("label").join(
         labels_df, on=["datetime", "vt_symbol"], how="left"
@@ -400,12 +431,34 @@ def predict_live(
     print("\n[Step 3] 生成周度标签 ...")
     if weekly_label == "friday_close":
         labels_df = generate_weekly_labels_realistic(bar_df)
+    elif weekly_label == "excess_return":
+        labels_df = generate_weekly_labels_excess_return(bar_df, benchmark_symbol="000300.SSE")
+    elif weekly_label == "dynamic_regime":
+        labels_df = generate_weekly_labels_dynamic(bar_df, benchmark_symbol="000300.SSE")
     else:
         labels_df = generate_weekly_labels(bar_df)
+
+    # 提取基准作为 Regime 特征
+    bench_symbol = "000300.SSE"
+    bench_features = raw_features.filter(pl.col("vt_symbol") == bench_symbol).drop("vt_symbol")
+    regime_cols_to_keep = ["datetime"] + [
+        c for c in bench_features.columns 
+        if c.startswith(("roc_", "std_", "ma_", "beta_"))
+    ]
+    bench_features = bench_features.select(regime_cols_to_keep)
+    bench_features = bench_features.rename({
+        c: f"regime_{c}" for c in bench_features.columns if c != "datetime"
+    })
+
+    # 从主特征中剔除基准本身
+    raw_features = raw_features.filter(pl.col("vt_symbol") != bench_symbol)
 
     monday_features = raw_features.with_columns(
         pl.col("datetime").dt.weekday().alias("_weekday")
     ).filter(pl.col("_weekday") == 1).drop("_weekday")
+
+    # 拼接 Regime 特征
+    monday_features = monday_features.join(bench_features, on="datetime", how="left")
 
     monday_with_labels = monday_features.drop("label").join(
         labels_df, on=["datetime", "vt_symbol"], how="left"

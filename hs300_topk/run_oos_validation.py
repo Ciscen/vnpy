@@ -37,6 +37,7 @@ from hs300_topk.strategy.config import (
     OPTIMIZED_V12,
     OPTIMIZED_V13,
     OPTIMIZED_V14,
+    OPTIMIZED_V14R,
     OPTIMIZED_V15,
 )
 from hs300_topk.pipeline_config import PIPELINE
@@ -47,6 +48,7 @@ ALL_CONFIGS: dict[str, StrategyConfig] = {
     "v1.2": OPTIMIZED_V12,
     "v1.3": OPTIMIZED_V13,
     "v1.4": OPTIMIZED_V14,
+    "v1.4r": OPTIMIZED_V14R,
     "v1.5": OPTIMIZED_V15,
 }
 
@@ -71,6 +73,11 @@ def _run_backtest(
     """对指定窗口执行一次回测，返回统计字典。"""
     lab = get_lab(lab_path)
     vt_symbols = discover_symbols(lab_path)
+
+    needs_benchmark = config.use_market_filter or config.regime_filter
+    if needs_benchmark and config.market_benchmark not in vt_symbols:
+        vt_symbols = vt_symbols + [config.market_benchmark]
+        lab.add_contract_setting(config.market_benchmark, 0, 0, 1, 0.01)
 
     engine = BacktestingEngine(lab)
     engine.set_parameters(

@@ -84,6 +84,19 @@ class StrategyConfig:
     # 调仓周期
     rebalance_period: int = 1                # 1=每周, 2=双周
 
+    # ── 市场 Regime 过滤（渐进式仓位缩放） ──
+    regime_filter: bool = False            # 总开关
+    regime_ma_short: int = 20              # 短期均线窗口
+    regime_ma_long: int = 60               # 长期均线窗口
+    regime_vol_window: int = 20            # 已实现波动率窗口
+    regime_vol_baseline: int = 60          # 波动率基线窗口（长期均值）
+    regime_momentum_window: int = 20       # 基准动量窗口
+    regime_min_score: float = 0.15         # score 低于此值时完全不买入
+
+    # ── 组合回撤熔断 ──
+    max_portfolio_drawdown: float = 0.0    # 组合从峰值回撤超此值→清仓（0=禁用）
+    drawdown_cooldown_days: int = 20       # 熔断后冷却交易日
+
     # ── 模型参数 ──
     xgb_n_estimators: int = 500
     xgb_max_depth: int = 6
@@ -201,6 +214,35 @@ OPTIMIZED_V14 = StrategyConfig(
     max_hold_days=5,
     top_k=5,
     stock_cooldown_days=10,
+)
+
+OPTIMIZED_V14R = StrategyConfig(
+    version="v1.4r",
+    description=(
+        "V1.4R: V1.4 + 组合回撤熔断15% / 冷却10日；"
+        "Regime 缩放已关闭（网格验证对牛市伤害大，见 run_regime_grid）"
+    ),
+    smooth_rebalance=True,
+    max_replace_ratio=0.7,
+    use_atr_stop=True,
+    atr_stop_multiplier=2.0,
+    atr_stop_min=0.02,
+    atr_stop_max=0.05,
+    dynamic_k=True,
+    dynamic_k_min=3,
+    dynamic_k_prob_threshold=0.30,
+    weight_by_signal=True,
+    min_signal_prob=0.15,
+    stop_loss_pct=0.04,
+    tp_activate_pct=0.04,
+    tp_trail_pct=0.02,
+    max_hold_days=5,
+    top_k=5,
+    stock_cooldown_days=10,
+    regime_filter=False,
+    max_portfolio_drawdown=0.15,
+    drawdown_cooldown_days=10,
+    market_benchmark="000300.SSE",
 )
 
 OPTIMIZED_V15 = StrategyConfig(

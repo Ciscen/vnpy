@@ -61,11 +61,14 @@ def phase_train(
     lag_days: int = 0,
 ) -> pl.DataFrame:
     """执行滚动训练，返回信号 DataFrame。结果会缓存到磁盘。"""
-    cache_path = (
-        pipe.signal_cache_weekly_realistic
-        if weekly_label == "friday_close"
-        else pipe.signal_cache
-    )
+    if weekly_label == "friday_close":
+        cache_path = pipe.signal_cache_weekly_realistic
+    elif weekly_label == "excess_return":
+        cache_path = pipe.signal_cache.parent / "signal_cache_excess.parquet"
+    elif weekly_label == "dynamic_regime":
+        cache_path = pipe.signal_cache.parent / "signal_cache_dynamic.parquet"
+    else:
+        cache_path = pipe.signal_cache
 
     print("\n" + "=" * 60)
     print("  Phase 2: 周频滚动训练")
@@ -96,11 +99,14 @@ def phase_train_or_load(
     lag_days: int = 0,
 ) -> pl.DataFrame:
     """加载缓存信号或执行训练"""
-    cache_path = (
-        pipe.signal_cache_weekly_realistic
-        if weekly_label == "friday_close"
-        else pipe.signal_cache
-    )
+    if weekly_label == "friday_close":
+        cache_path = pipe.signal_cache_weekly_realistic
+    elif weekly_label == "excess_return":
+        cache_path = pipe.signal_cache.parent / "signal_cache_excess.parquet"
+    elif weekly_label == "dynamic_regime":
+        cache_path = pipe.signal_cache.parent / "signal_cache_dynamic.parquet"
+    else:
+        cache_path = pipe.signal_cache
 
     if skip_train and cache_path.exists():
         print("\n" + "=" * 60)
@@ -145,7 +151,8 @@ def phase_backtest(
     lab = get_lab(pipe.lab_path)
     vt_symbols = discover_symbols(pipe.lab_path)
 
-    if config.use_market_filter and config.market_benchmark not in vt_symbols:
+    needs_benchmark = config.use_market_filter or config.regime_filter
+    if needs_benchmark and config.market_benchmark not in vt_symbols:
         vt_symbols = vt_symbols + [config.market_benchmark]
         lab.add_contract_setting(config.market_benchmark, 0, 0, 1, 0.01)
 
@@ -265,10 +272,13 @@ def main() -> None:
                              "报告子目录附加 _oos")
     parser.add_argument(
         "--weekly-label",
-        choices=["high_touch", "friday_close"],
-        default="friday_close",
+        choices=["high_touch", "friday_close", "excess_return", "dynamic_regime", "ensemble"],
+        default="ensemble",
         help="周频训练标签：high_touch=周内high触及+5%%；"
-             "friday_close=保守对照，周内最后收盘 vs 周二开盘 +3%%",
+             "friday_close=保守对照，周内最后收盘 vs 周二开盘 +3%%；"
+             "excess_return=超额收益（相对000300.SSE）；"
+             "dynamic_regime=牛市high_touch/熊市excess_return；"
+             "ensemble=双模型融合预测（推荐，牛市高弹性+熊市防御）",
     )
     parser.add_argument("--filter-hs300", action="store_true",
                         help="回测时信号只保留当前 HS300 成分股（模拟生产选股限制）")
@@ -319,12 +329,43 @@ def main() -> None:
         print(f"\n  使用已有数据: {len(vt_symbols)} 只股票")
 
     # Phase 2: 训练
-    signal_df = phase_train_or_load(
-        pipe,
-        skip_train=args.backtest_only,
-        weekly_label=args.weekly_label,
-        lag_days=args.lag_days,
-    )
+    if args.weekly_label == "ensemble":
+        print("\n" + "=" * 60)
+        print("  Phase 2: 加载/训练双模型进行 Ensemble (High Touch + Excess Return)")
+        print("=" * 60)
+        sig_ht = phase_train_or_load(pipe, skip_train=args.backtest_only, weekly_label="high_touch", lag_days=args.lag_days)
+        sig_ex = phase_train_or_load(pipe, skip_train=args.backtest_only, weekly_label="excess_return", lag_days=args.lag_days)
+        
+        sig_ht = sig_ht.rename({"signal": "signal_ht"})
+        sig_ex = sig_ex.rename({"signal": "signal_ex"})
+        df = sig_ht.join(sig_ex, on=["datetime", "vt_symbol"], how="inner")
+        
+        lab = get_lab(pipe.lab_path)
+        from hs300_topk.data.loader import load_bar_df
+        bench_df = load_bar_df(lab, ["000300.SSE"], pipe.data_start, pipe.backtest_end)
+        bench_df = bench_df.sort("datetime").with_columns([
+            pl.col("close").rolling_mean(window_size=60).alias("ma60")
+        ])
+        bench_df = bench_df.with_columns([
+            pl.col("close").shift(1).alias("prev_close"),
+            pl.col("ma60").shift(1).alias("prev_ma60")
+        ]).select(["datetime", "prev_close", "prev_ma60"])
+        
+        df = df.join(bench_df, on="datetime", how="left")
+        df = df.with_columns([
+            pl.when(pl.col("prev_close") > pl.col("prev_ma60"))
+            .then(pl.col("signal_ht"))
+            .otherwise(pl.col("signal_ex"))
+            .alias("signal")
+        ])
+        signal_df = df.select(["datetime", "vt_symbol", "signal"])
+    else:
+        signal_df = phase_train_or_load(
+            pipe,
+            skip_train=args.backtest_only,
+            weekly_label=args.weekly_label,
+            lag_days=args.lag_days,
+        )
 
     # 可选: 过滤到当前 HS300 成分股（用于对比测试）
     if args.filter_hs300:
@@ -345,6 +386,10 @@ def main() -> None:
     report_subdir_suffix = "_oos" if args.oos_validate else ""
     if args.weekly_label == "friday_close":
         report_subdir_suffix += "_lbl_friday_close"
+    elif args.weekly_label == "excess_return":
+        report_subdir_suffix += "_lbl_excess_return"
+    elif args.weekly_label == "ensemble":
+        report_subdir_suffix += "_ensemble"
 
     if args.config == "compare":
         results = []

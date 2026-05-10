@@ -21,6 +21,8 @@ HS300 周度选股策略 — 基于 XGBoost 概率信号的多股票轮动。
 """
 from __future__ import annotations
 
+import math
+
 import polars as pl
 
 from vnpy.trader.object import BarData, TradeData
@@ -71,6 +73,15 @@ class HS300Top10Strategy(AlphaStrategy):
     momentum_min_return: float = -0.03
     rebalance_period: int = 1
     stock_cooldown_days: int = 0
+    regime_filter: bool = False
+    regime_ma_short: int = 20
+    regime_ma_long: int = 60
+    regime_vol_window: int = 20
+    regime_vol_baseline: int = 60
+    regime_momentum_window: int = 20
+    regime_min_score: float = 0.15
+    max_portfolio_drawdown: float = 0.0
+    drawdown_cooldown_days: int = 20
 
     def on_init(self) -> None:
         """策略初始化"""
@@ -92,6 +103,11 @@ class HS300Top10Strategy(AlphaStrategy):
         self._extended_symbols: dict[str, int] = {}
         self._week_counter: int = 0
         self._stock_cooldowns: dict[str, int] = {}
+
+        self._regime_score: float = 1.0
+        self._benchmark_vol_history: list[float] = []
+        self._portfolio_peak: float = 0.0
+        self._drawdown_cooldown: int = 0
 
         self.write_log("HS300Top10Strategy 初始化完成")
 
@@ -144,7 +160,7 @@ class HS300Top10Strategy(AlphaStrategy):
         if self.use_atr_stop or self.momentum_filter:
             self._update_atr(bars)
 
-        if self.use_market_filter:
+        if self.use_market_filter or self.regime_filter:
             self._update_market_state(bars)
 
         self._update_hold_and_peak(bars, pos_symbols)
@@ -155,6 +171,15 @@ class HS300Top10Strategy(AlphaStrategy):
                 del self._stock_cooldowns[s]
             for s in self._stock_cooldowns:
                 self._stock_cooldowns[s] -= 1
+
+        drawdown_breaker = self._portfolio_drawdown_check(bars)
+        if drawdown_breaker:
+            for s in pos_symbols:
+                self._pending_sell_reasons[s] = "drawdown_breaker"
+                self.set_target(s, 0)
+            self._cap_buy_targets(bars)
+            self.execute_trading(bars, price_add=self.price_add)
+            return
 
         risk_sell = self._risk_check(bars, pos_symbols)
 
@@ -379,20 +404,121 @@ class HS300Top10Strategy(AlphaStrategy):
                 self._atr_cache[symbol] = sum(trs) / len(trs)
 
     def _update_market_state(self, bars: dict[str, BarData]) -> None:
-        """更新市场状态（指数是否在 MA 上方）"""
+        """更新市场状态（指数是否在 MA 上方）+ regime score"""
         bench_bar = bars.get(self.market_benchmark)
         if bench_bar:
             self._benchmark_closes.append(bench_bar.close_price)
-            if len(self._benchmark_closes) > self.market_ma_period + 1:
+            max_history = max(
+                self.market_ma_period + 1,
+                self.regime_ma_long + 1 if self.regime_filter else 0,
+                self.regime_vol_baseline + 1 if self.regime_filter else 0,
+            )
+            if len(self._benchmark_closes) > max_history:
                 self._benchmark_closes.pop(0)
-        elif self._benchmark_closes:
-            pass
 
         if len(self._benchmark_closes) >= self.market_ma_period:
             ma = sum(self._benchmark_closes[-self.market_ma_period:]) / self.market_ma_period
             self._market_ok = self._benchmark_closes[-1] >= ma
         else:
             self._market_ok = True
+
+        if self.regime_filter:
+            self._regime_score = self._compute_regime_score()
+
+    def _compute_regime_score(self) -> float:
+        """计算市场健康度 regime_score in [0, 1]。
+
+        三维度等权打分:
+          1. 趋势分: close vs MA_short, close vs MA_long → 各 0.5
+          2. 波动率分: 近期 vol / 长期 vol 的倒数归一化
+          3. 动量分: N 日收益率归一化到 [0, 1]
+        """
+        closes = self._benchmark_closes
+        n = len(closes)
+
+        if n < max(self.regime_ma_short, self.regime_momentum_window, 5):
+            return 1.0
+
+        current = closes[-1]
+
+        trend_score = 0.0
+        if n >= self.regime_ma_short:
+            ma_short = sum(closes[-self.regime_ma_short:]) / self.regime_ma_short
+            trend_score += 0.5 if current >= ma_short else 0.0
+        if n >= self.regime_ma_long:
+            ma_long = sum(closes[-self.regime_ma_long:]) / self.regime_ma_long
+            trend_score += 0.5 if current >= ma_long else 0.0
+        elif n >= self.regime_ma_short:
+            trend_score += 0.25
+
+        vol_score = 0.5
+        short_win = min(self.regime_vol_window, n - 1)
+        if short_win >= 5:
+            rets = [
+                (closes[-i] - closes[-i - 1]) / closes[-i - 1]
+                for i in range(1, short_win + 1)
+                if closes[-i - 1] > 0
+            ]
+            if rets:
+                recent_vol = math.sqrt(sum(r * r for r in rets) / len(rets))
+                long_win = min(self.regime_vol_baseline, n - 1)
+                if long_win > short_win:
+                    long_rets = [
+                        (closes[-i] - closes[-i - 1]) / closes[-i - 1]
+                        for i in range(1, long_win + 1)
+                        if closes[-i - 1] > 0
+                    ]
+                    baseline_vol = math.sqrt(sum(r * r for r in long_rets) / len(long_rets)) if long_rets else recent_vol
+                else:
+                    baseline_vol = recent_vol
+
+                if baseline_vol > 0:
+                    vol_ratio = recent_vol / baseline_vol
+                    vol_score = max(0.0, min(1.0, 1.5 - vol_ratio))
+
+        mom_score = 0.5
+        mom_win = min(self.regime_momentum_window, n - 1)
+        if mom_win >= 5 and closes[-mom_win - 1] > 0:
+            momentum = (current - closes[-mom_win - 1]) / closes[-mom_win - 1]
+            mom_score = max(0.0, min(1.0, momentum * 10 + 0.5))
+
+        score = (trend_score + vol_score + mom_score) / 3.0
+        return max(0.0, min(1.0, score))
+
+    def _portfolio_drawdown_check(self, bars: dict[str, BarData]) -> bool:
+        """组合回撤熔断检查。
+
+        冷却结束后从当前净值重新开始跟踪 peak，避免永久锁死。
+
+        Returns:
+            True 表示触发熔断，应当清仓。
+        """
+        if self.max_portfolio_drawdown <= 0:
+            return False
+
+        if self._drawdown_cooldown > 0:
+            self._drawdown_cooldown -= 1
+            if self._drawdown_cooldown == 0:
+                self._portfolio_peak = self._estimate_balance(bars)
+            return True
+
+        current_balance = self._estimate_balance(bars)
+        if current_balance > self._portfolio_peak:
+            self._portfolio_peak = current_balance
+
+        if self._portfolio_peak <= 0:
+            return False
+
+        drawdown = (self._portfolio_peak - current_balance) / self._portfolio_peak
+        if drawdown >= self.max_portfolio_drawdown:
+            self._drawdown_cooldown = self.drawdown_cooldown_days
+            self.write_log(
+                f"回撤熔断触发: drawdown={drawdown*100:.1f}% >= {self.max_portfolio_drawdown*100:.0f}%, "
+                f"冷却 {self.drawdown_cooldown_days} 天"
+            )
+            return True
+
+        return False
 
     def _rebalance(
         self,
@@ -409,6 +535,15 @@ class HS300Top10Strategy(AlphaStrategy):
             for symbol in pos_symbols:
                 if symbol not in risk_sell:
                     self._pending_sell_reasons[symbol] = "market_filter"
+                    self.set_target(symbol, 0)
+            return
+
+        if self.regime_filter and self._regime_score < self.regime_min_score:
+            for symbol in pos_symbols:
+                if symbol not in risk_sell:
+                    self._pending_sell_reasons[symbol] = (
+                        f"regime_exit(score={self._regime_score:.2f})"
+                    )
                     self.set_target(symbol, 0)
             return
 
@@ -483,7 +618,9 @@ class HS300Top10Strategy(AlphaStrategy):
         if not new_buys:
             return
 
-        buy_value = cash * self.cash_ratio / len(new_buys)
+        scale = math.sqrt(self._regime_score) if self.regime_filter else 1.0
+        effective_ratio = self.cash_ratio * scale
+        buy_value = cash * effective_ratio / len(new_buys)
         for symbol in new_buys:
             bar = bars.get(symbol)
             if not bar or not bar.close_price:
@@ -530,6 +667,8 @@ class HS300Top10Strategy(AlphaStrategy):
         if not new_buys:
             return
 
+        scale = math.sqrt(self._regime_score) if self.regime_filter else 1.0
+        effective_ratio = self.cash_ratio * scale
         if self.weight_by_signal:
             sig_map = {
                 row["vt_symbol"]: row["signal"]
@@ -541,12 +680,12 @@ class HS300Top10Strategy(AlphaStrategy):
                 bar = bars.get(symbol)
                 if not bar or not bar.close_price:
                     continue
-                alloc = cash * self.cash_ratio * (w / total_w)
+                alloc = cash * effective_ratio * (w / total_w)
                 volume = round_to(alloc / bar.close_price, self.min_volume)
                 if volume > 0:
                     self.set_target(symbol, volume)
         else:
-            buy_value = cash * self.cash_ratio / len(new_buys)
+            buy_value = cash * effective_ratio / len(new_buys)
             for symbol in new_buys:
                 bar = bars.get(symbol)
                 if not bar or not bar.close_price:

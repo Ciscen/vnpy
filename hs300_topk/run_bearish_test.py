@@ -18,7 +18,7 @@ from vnpy.alpha.strategy import BacktestingEngine
 from hs300_topk.data.loader import get_lab, discover_symbols
 from hs300_topk.model.rolling_trainer import rolling_train
 from hs300_topk.strategy.hs300_topk_strategy import HS300Top10Strategy
-from hs300_topk.strategy.config import OPTIMIZED_V13, OPTIMIZED_V14, OPTIMIZED_V15
+from hs300_topk.strategy.config import OPTIMIZED_V13, OPTIMIZED_V14, OPTIMIZED_V14R, OPTIMIZED_V15
 
 LAB_PATH = "./lab/hs300"
 DATA_START = "2016-04-30"
@@ -26,7 +26,7 @@ DATA_END = "2023-12-31"
 BT_START = "2022-01-01"
 BT_END = "2023-12-31"
 CAPITAL = 100_000
-WEEKLY_LABEL = "friday_close"
+WEEKLY_LABEL = "excess_return"
 LAG_DAYS = 3
 
 
@@ -53,9 +53,8 @@ def main() -> None:
     print(f"信号范围: {signal_df['datetime'].min()} ~ {signal_df['datetime'].max()}")
 
     configs = {
-        "V1.3": OPTIMIZED_V13,
         "V1.4": OPTIMIZED_V14,
-        "V1.5": OPTIMIZED_V15,
+        "V1.4R": OPTIMIZED_V14R,
     }
 
     logging.disable(logging.CRITICAL)
@@ -63,6 +62,10 @@ def main() -> None:
     for ver, cfg in configs.items():
         lab = get_lab(LAB_PATH)
         vt_symbols = discover_symbols(LAB_PATH)
+        needs_benchmark = cfg.use_market_filter or cfg.regime_filter
+        if needs_benchmark and cfg.market_benchmark not in vt_symbols:
+            vt_symbols = vt_symbols + [cfg.market_benchmark]
+            lab.add_contract_setting(cfg.market_benchmark, 0, 0, 1, 0.01)
         engine = BacktestingEngine(lab)
         engine.set_parameters(
             vt_symbols=vt_symbols,
