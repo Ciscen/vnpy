@@ -1,0 +1,21 @@
+{
+  "cash": 12000.0,
+  "positions": [
+    {
+      "symbol": "300394",
+      "name": "天孚通信",
+      "shares": 200,
+      "cost": 25.3,
+      "entry_date": "2026/4/28"
+    },
+    {
+      "symbol": "000063",
+      "name": "中兴通讯",
+      "shares": 100,
+      "cost": 1850.0,
+      "entry_date": "2026/4/21"
+    }
+  ],
+  "cooldowns": {},
+  "updated_at": "2026-05-07T23:01:36.072824"
+}

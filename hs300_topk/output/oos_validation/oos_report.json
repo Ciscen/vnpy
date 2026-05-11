@@ -1,0 +1,67 @@
+{
+  "weekly_label": "friday_close",
+  "is_window": "2024-05-01 ~ 2025-04-30",
+  "oos_window": "2025-05-01 ~ 2026-04-30",
+  "is_metric": "sharpe_ratio",
+  "is_best_version": "v1.4",
+  "is_results": {
+    "v1.0": {
+      "sharpe_ratio": -0.15871885401258598,
+      "annual_return": -7.750042314049589,
+      "total_return": -7.814626000000002,
+      "max_ddpercent": -27.782016061189285,
+      "return_drawdown_ratio": -0.22382137655159057,
+      "total_trade_count": 850.0
+    },
+    "v1.1": {
+      "sharpe_ratio": 0.8220791289714032,
+      "annual_return": 22.908561322314043,
+      "total_return": 23.099465999999993,
+      "max_ddpercent": -18.398753995780858,
+      "return_drawdown_ratio": 0.873164087541146,
+      "total_trade_count": 586.0
+    },
+    "v1.2": {
+      "sharpe_ratio": 0.8727856129495187,
+      "annual_return": 24.994402314049605,
+      "total_return": 25.20268900000002,
+      "max_ddpercent": -18.592260770013414,
+      "return_drawdown_ratio": 0.9210317451616279,
+      "total_trade_count": 476.0
+    },
+    "v1.3": {
+      "sharpe_ratio": 0.9602002887609005,
+      "annual_return": 28.189827768595016,
+      "total_return": 28.424742999999975,
+      "max_ddpercent": -17.348362243694883,
+      "return_drawdown_ratio": 1.1022354001348438,
+      "total_trade_count": 470.0
+    },
+    "v1.4": {
+      "sharpe_ratio": 1.590194313509065,
+      "annual_return": 60.46078314049583,
+      "total_return": 60.96462299999996,
+      "max_ddpercent": -20.381091803995876,
+      "return_drawdown_ratio": 1.5524602387938726,
+      "total_trade_count": 306.0
+    },
+    "v1.5": {
+      "sharpe_ratio": 1.0800182422391076,
+      "annual_return": 36.749495206611506,
+      "total_return": 37.055740999999934,
+      "max_ddpercent": -19.685525966467445,
+      "return_drawdown_ratio": 1.1519364284318239,
+      "total_trade_count": 255.0
+    }
+  },
+  "oos_results": {
+    "v1.4": {
+      "sharpe_ratio": 2.6788088300449275,
+      "annual_return": 86.37024793388436,
+      "total_return": 87.09000000000006,
+      "max_ddpercent": -9.411771783388378,
+      "return_drawdown_ratio": 6.005046059027356,
+      "total_trade_count": 267.0
+    }
+  }
+}

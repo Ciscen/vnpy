@@ -35,7 +35,7 @@ class PipelineConfig:
     lab_path: str = "./lab/hs300"
     data_start: str = "2016-04-30"
     data_end: str = "2026-04-30"
-    backtest_start: str = "2024-05-01"
+    backtest_start: str = "2022-01-01"
     backtest_end: str = "2026-04-30"
     capital: int = 100_000
     benchmark: str = "000300.SSE"

@@ -60,10 +60,11 @@ def symbol_to_exchange(code: str) -> Exchange:
 
 
 def download_one(ak_symbol: str, start: str, end: str):
-    """带重试的单只股票下载（akshare 前复权日线）。"""
+    """带重试的单只股票下载（首选 AKShare，失败后回退至 BaoStock 前复权日线）。"""
     import akshare as ak
+    import baostock as bs
 
-    for attempt in range(MAX_RETRIES):
+    for attempt in range(2):
         try:
             df = ak.stock_zh_a_daily(
                 symbol=ak_symbol,
@@ -73,13 +74,44 @@ def download_one(ak_symbol: str, start: str, end: str):
             )
             return df
         except Exception as e:
-            if attempt < MAX_RETRIES - 1:
-                wait = (attempt + 1) * 3
-                print(f"    重试 {attempt+1}/{MAX_RETRIES} (等待{wait}s): {e}", flush=True)
+            if attempt < 1:
+                wait = (attempt + 1) * 2
                 time.sleep(wait)
             else:
-                print(f"    全部重试失败: {e}", flush=True)
-                return None
+                pass # 准备切 baostock
+
+    # AKShare 失败，尝试 BaoStock 作为兜底
+    bs_symbol = f"{ak_symbol[:2]}.{ak_symbol[2:]}"
+    bs_start = f"{start[:4]}-{start[4:6]}-{start[6:]}" if len(start) == 8 else start
+    bs_end = f"{end[:4]}-{end[4:6]}-{end[6:]}" if len(end) == 8 else end
+
+    try:
+        bs.login()
+        rs = bs.query_history_k_data_plus(
+            bs_symbol,
+            "date,open,high,low,close,volume,amount",
+            start_date=bs_start,
+            end_date=bs_end,
+            frequency="d",
+            adjustflag="2"
+        )
+        if rs.error_code == '0' and len(rs.data) > 0:
+            df = rs.get_data()
+            # 确保列的数据类型正确
+            for col in ["open", "high", "low", "close", "volume", "amount"]:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            bs.logout()
+            return df
+        bs.logout()
+    except Exception as e:
+        print(f"    BaoStock 兜底下载失败: {e}", flush=True)
+        try:
+            bs.logout()
+        except:
+            pass
+
+    return None
 
 
 def get_parquet_max_date(parquet_file: Path) -> datetime | None:

@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+每次执行完一次任务后，包括需要AskQuestions中断时，都总结过程，发送飞书通知
